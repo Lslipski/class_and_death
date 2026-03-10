@@ -1,0 +1,111 @@
+---
+title: "Class and Death Project Development Notebook"
+subtitle: "Exploration of cohort creation prior to analysis"
+author: "Luke Slipski"
+date: "Published on `r format(Sys.time(), '%m-%d-%y')`"
+format:
+  html:
+    toc: true
+    toc-location: left
+    toc-depth: 5
+fig-cap-location: top
+editor:
+  markdown:
+    wrap: 72
+execute: 
+  echo: false
+  output: false
+---
+
+```{r}
+library("tidyverse")
+# download CAdeathserver with remotes::install_git("https://github.com/Lslipski/CAdeathserver")
+library("CAdeathserver")
+# download merced.clc package with remotes::install_git("https://github.com/Lslipski/merced.clc")
+library("merced.clc")
+```
+
+# Main Data Loading
+
+The main data set includes the following filters:
+
+  -   State of residence is CA
+  
+```{r}
+# Get clean mortality dataset
+# This file is large and will take a minute to load
+df_mortality_clean = load_ca_mortality_data(df = 'latest') %>% 
+  get_ca_residence_only() %>% 
+  recode_race() %>%
+  recode_age() %>%
+  recode_education() %>%
+  recode_sex() %>% 
+  create_covid_death_flag()
+```
+
+
+# Industry and Occupation Code Cleaning
+
+I used the below code to remove industry and occupation fields that contained the `&` and `#` characters
+because there were duplicates with these when using `load_industry_occupation()`. This updated data file was saved to `E:/shared/heb_lab/data/nioccs/nioccs_coded_ind_occ_20230831_mortality.rds`, which is currently where
+the CAdeathserver package loads industry and occupation data from.
+
+```{r}
+#| echo: true
+#| eval: false
+target <- c("&", "#") %>% paste(collapse = "|")
+
+ind_occ_to_remove = load_industry_occupation() %>% 
+  filter(if_any(contains("ind"), 
+                ~str_detect(.x, target)) |
+           if_any(contains("occ"), 
+                ~str_detect(.x, target)))
+
+df_ind_occ_all %>% saveRDS(.,
+                           file = "E:/shared/heb_lab/data/nioccs/nioccs_coded_ind_occ_20230831_mortality.rds")
+```
+
+# Group Variables
+
+## Class 
+
+This section takes the data set that was returned from the NIOCCS tool, which
+has a record for every unique industry + occupation combination in the original
+mortality data from 2023-08-31, and looks at the various industry and occupation
+standards to which the NIOCCS tool mapped the original mortality combinations. These
+are SOC (standard occupation classification) and Census codes. 
+
+Main Findings: 
+  -   SOC and census occupation are identically missing (~21k records)
+  -   There are fewer records missing census industry than census occupation, it is still too many to manually re-code (~15k records) 
+  -   The number of records missing BOTH census industry and census occupation information is much lower (1,650)
+
+## Industry Codes
+
+```{r}
+df_indocc <- df_mortality_clean %>% 
+  join_industry_occupation(.) %>% 
+  select(id = id.x,
+         industry,
+         occupation,
+         starts_with("census"),
+         starts_with("naics"),
+         starts_with("soc_"),
+         unexpected_naics_soc_combo) %>% 
+  distinct()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
