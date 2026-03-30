@@ -38,9 +38,11 @@ df_mortality_clean = load_ca_mortality_data(df = 'latest') %>%
   get_ca_residence_only() %>% 
   recode_race() %>%
   recode_age() %>%
-  recode_education() %>%
+  recode_education_farmworkers() %>%
   recode_sex() %>% 
-  create_covid_death_flag()
+  create_covid_death_flag() %>% 
+  recode_marital_status() %>% 
+  join_industry_occupation()
 ```
 
 
@@ -53,21 +55,35 @@ the CAdeathserver package loads industry and occupation data from.
 ```{r}
 #| echo: true
 #| eval: false
-target <- c("&", "#") %>% paste(collapse = "|")
-
-ind_occ_to_remove = load_industry_occupation() %>% 
-  filter(if_any(contains("ind"), 
-                ~str_detect(.x, target)) |
-           if_any(contains("occ"), 
-                ~str_detect(.x, target)))
-
-df_ind_occ_all %>% saveRDS(.,
-                           file = "E:/shared/heb_lab/data/nioccs/nioccs_coded_ind_occ_20230831_mortality.rds")
+# target <- c("&", "#") %>% paste(collapse = "|")
+# 
+# ind_occ_to_remove = load_industry_occupation() %>% 
+#   filter(if_any(contains("ind"), 
+#                 ~str_detect(.x, target)) |
+#            if_any(contains("occ"), 
+#                 ~str_detect(.x, target)))
+# 
+# df_ind_occ_all %>% saveRDS(.,
+#                            file = "E:/shared/heb_lab/data/nioccs/nioccs_coded_ind_occ_20230831_mortality.rds")
 ```
 
 # Group Variables
 
-## Class 
+## Industry and Occupation 
+
+```{r}
+df_indocc <- df_mortality_clean %>% 
+  select(id,
+         industry,
+         occupation,
+         starts_with("census"),
+         starts_with("naics"),
+         starts_with("soc_"),
+         unexpected_naics_soc_combo) %>% 
+  distinct()
+```
+
+### Summary Review of Code Missingness
 
 This section takes the data set that was returned from the NIOCCS tool, which
 has a record for every unique industry + occupation combination in the original
@@ -80,25 +96,110 @@ Main Findings:
   -   There are fewer records missing census industry than census occupation, it is still too many to manually re-code (~15k records) 
   -   The number of records missing BOTH census industry and census occupation information is much lower (1,650)
 
-## Industry Codes
+
+### Codes of Interest
+
+Descriptions taken from [here](https://www2.census.gov/programs-surveys/cps/methodology/Occupation%20Codes.pdf)
 
 ```{r}
-df_indocc <- df_mortality_clean %>% 
-  join_industry_occupation(.) %>% 
-  select(id = id.x,
-         industry,
-         occupation,
-         starts_with("census"),
-         starts_with("naics"),
-         starts_with("soc_"),
-         unexpected_naics_soc_combo) %>% 
-  distinct()
+#| output: true
+occ_codes_of_interest = tribble(~census_occ_code_2018, ~description,
+                                "6050", "Miscellaneous Agricultural Workers",
+                                "6040", "Graders and sorters, agricultural products",
+                                "6005", "First-line supervisors of farming, fishing, and forestry workers",
+                                "6010", "Agricultural inspectors",
+                                "6020", "Animal breeders",
+                                "6115", "Fishing and hunting workers",
+                                "6120", "Forest and conservation workers",
+                                "6130", "Logging workers",
+                                "0205", "Farmers, ranchers, and other agricultural managers",
+                                "7810", "Butchers and other meat, poultry, and fish processing workers")
+
+occ_codes_of_interest %>% 
+  arrange(census_occ_code_2018) %>% 
+  dt_table(search = F,
+           page = F)
+```
+
+
+### Count of Mortality Records by Codes of Interest
+```{r}
+#| output: true
+df_indocc %>% 
+  filter(census_occ_code %in% occ_codes_of_interest$census_occ_code_2018) %>% 
+  count(census_occ_code, 
+        census_occ_title) %>% 
+  arrange(desc(n)) %>% 
+  dt_table() %>% 
+  add_commas("n")
+```
+
+
+## Race
+
+
+### Overall Cohort
+```{r}
+#| output: true
+df_mortality_clean %>% 
+  count(recode_race) %>% 
+  arrange(desc(n)) %>% 
+  dt_table(search = F,
+           page = F) %>% 
+  add_commas("n")
+```
+
+### Limited to Occupations of Interest
+```{r}
+#| output: true
+df_mortality_clean %>% 
+  filter(census_occ_code %in% occ_codes_of_interest$census_occ_code_2018) %>% 
+  count(census_occ_code,
+        census_occ_title,
+        recode_race) %>% 
+  arrange(census_occ_code,
+          census_occ_title,
+          desc(n)) %>% 
+  dt_table(search = F) %>% 
+  add_commas("n")
 ```
 
 
 
+# Cohort 1: Limited to Ag Workers and Ag Managers
+
+This section will limit the cohort to only 2 occupation codes: 
+```{r}
+cohort1_occ_codes = c("6050", "0205")
+occ_codes_of_interest %>% 
+  filter(census_occ_code_2018 %in% cohort1_occ_codes) %>% 
+  dt_table(search = F,
+           page = F)
+```
+
+```{r}
+df_cohort1 = df_mortality_clean %>% 
+  filter(census_occ_code %in% cohort1_occ_codes)
+```
 
 
+## Education
+
+### Overall
+```{r}
+df_cohort1 %>% 
+  count(recode_educ_farmwork)
+```
+### By Occupation
+```{r}
+df_cohort1 %>% 
+  group_by(census_occ_code,
+           census_occ_title) %>% 
+  count(recode_educ_farmwork) %>% 
+  mutate(percent_within_occupation = round(n / sum(n) * 100, 2)) %>% 
+  dt_table(page = F) %>% 
+  add_commas("n")
+```
 
 
 
