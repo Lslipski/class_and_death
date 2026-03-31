@@ -217,13 +217,12 @@ df_cohort1 %>%
 ```
 ### By Occupation
 ```{r}
-  
 c1_education = df_cohort1 %>% 
   group_by(census_occ_title, recode_educ_farmwork) %>% 
   summarize(n = n_distinct(id),
             .groups = "drop_last") %>%
   mutate(percent_within_occupation = round(n / sum(n) * 100, 1),
-         `Number of workers (Percent within occ)` = paste0(n, 
+         `Number of workers (Percent within occ)` = paste0(format(n, big.mark = ","), 
                                                           " (",
                                                           percent_within_occupation,
                                                           "%)")) %>%
@@ -251,10 +250,188 @@ c1_education %>%
 
 
 
+
+## Marital Status
+
+:::{.callout-note}
+We may want to combine married/widowed/divorced with the domestic partnership versions of these.
+:::
+
+### Overall
 ```{r}
 df_cohort1 %>% 
-  
+  count(recode_marital_status) %>% 
+  dt_table() %>% 
+  add_commas("n")
 ```
+
+
+### By Occupation
+```{r}
+c1_marital_status = df_cohort1 %>% 
+  group_by(census_occ_title, recode_marital_status) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop_last") %>%
+  mutate(percent_within_occupation = round(n / sum(n) * 100, 1),
+         `Number of workers (Percent within occ)` = paste0(format(n, big.mark = ","), 
+                                                          " (",
+                                                          percent_within_occupation,
+                                                          "%)")) %>%
+  ungroup() %>% 
+  select(-n, -percent_within_occupation) %>% 
+  pivot_wider(names_from = census_occ_title,
+              values_from = `Number of workers (Percent within occ)`) %>% 
+  rename(level = recode_marital_status) %>% 
+  mutate(measure = "Marital Status") %>% 
+  relocate(measure, level) %>% 
+  arrange(level)
+  
+c1_marital_status %>% 
+  dt_table(page = F) 
+```
+
+## Sex
+
+### Overall
+```{r}
+df_cohort1 %>% 
+  count(recode_sex) %>% 
+  dt_table() %>% 
+  add_commas("n")
+```
+
+### By Occupation
+```{r}
+c1_sex = df_cohort1 %>% 
+  group_by(census_occ_title, recode_sex) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop_last") %>%
+  mutate(percent_within_occupation = round(n / sum(n) * 100, 1),
+         `Number of workers (Percent within occ)` = paste0(format(n, big.mark = ","), 
+                                                          " (",
+                                                          percent_within_occupation,
+                                                          "%)")) %>%
+  ungroup() %>% 
+  select(-n, -percent_within_occupation) %>% 
+  pivot_wider(names_from = census_occ_title,
+              values_from = `Number of workers (Percent within occ)`) %>% 
+  rename(level = recode_sex) %>% 
+  mutate(measure = "Sex") %>% 
+  relocate(measure, level) %>% 
+  arrange(level)
+  
+c1_sex %>% 
+  dt_table(page = F) 
+```
+
+## Race
+
+:::{.callout-note}
+We have a number of race codes that we still need to categorize. They're spelled out in the Class and Death Shared Notebook google doc
+:::
+
+### Overall
+```{r}
+df_cohort1 %>% 
+  count(recode_race) %>% 
+  dt_table() %>% 
+  add_commas("n")
+```
+
+
+### By Occupation
+```{r}
+c1_race = df_cohort1 %>% 
+  group_by(census_occ_title, recode_race) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop_last") %>%
+  mutate(percent_within_occupation = round(n / sum(n) * 100, 1),
+         `Number of workers (Percent within occ)` = paste0(format(n, big.mark = ","), 
+                                                          " (",
+                                                          percent_within_occupation,
+                                                          "%)")) %>%
+  ungroup() %>% 
+  select(-n, -percent_within_occupation) %>% 
+  pivot_wider(names_from = census_occ_title,
+              values_from = `Number of workers (Percent within occ)`) %>% 
+  rename(level = recode_race) %>% 
+  mutate(measure = "Race") %>% 
+  relocate(measure, level) %>% 
+  arrange(level)
+  
+c1_race %>% 
+  dt_table(page = F) 
+```
+
+
+
+
+
+## Age at Death
+
+
+### Overall
+```{r}
+df_cohort1 %>% 
+  summarize(mean_age_at_death = round(mean(recode_age_int, 
+                                      na.rm = T), 1),
+            std_age_at_death = round(sd(recode_age_int,
+                                  na.rm = T), 1),
+            .groups = "drop") %>% 
+  mutate(`mean (sd)` = paste0(mean_age_at_death, " (", std_age_at_death, ")")) %>% 
+  select(`mean (sd)`)
+```
+
+
+### By Occupation
+
+```{r}
+c1_age_at_death = df_cohort1 %>% 
+  group_by(census_occ_title) %>% 
+  summarize(mean_age_at_death = round(mean(recode_age_int, 
+                                      na.rm = T), 1),
+            std_age_at_death = round(sd(recode_age_int,
+                                  na.rm = T), 1),
+            .groups = "drop") %>% 
+  mutate(`mean (sd)` = paste0(mean_age_at_death, " (", std_age_at_death, ")")) %>% 
+  select(census_occ_title, `mean (sd)`) %>% 
+  pivot_wider(names_from = census_occ_title,
+              values_from = `mean (sd)`) %>% 
+  mutate(measure = "Age at Death",
+         level = "Overall") %>% 
+  relocate(measure, level) %>% 
+  arrange(level)
+  
+c1_age_at_death %>% 
+  dt_table()
+```
+
+### By Occupation and Sex
+
+```{r}
+c1_age_at_death_sex = df_cohort1 %>% 
+  group_by(census_occ_title, recode_sex) %>% 
+  summarize(mean_age_at_death = round(mean(recode_age_int, 
+                                      na.rm = T), 1),
+            std_age_at_death = round(sd(recode_age_int,
+                                  na.rm = T), 1),
+            .groups = "drop") %>% 
+  mutate(`mean (sd)` = paste0(mean_age_at_death, " (", std_age_at_death, ")")) %>% 
+  select(census_occ_title, recode_sex, `mean (sd)`) %>% 
+  pivot_wider(names_from = census_occ_title,
+              values_from = `mean (sd)`) %>% 
+  rename(level = recode_sex) %>% 
+  mutate(measure = "Age at Death") %>% 
+  relocate(measure, level) %>% 
+  arrange(level)
+  
+c1_age_at_death_sex %>% 
+  dt_table()
+```
+
+
+
+
 
 
 
