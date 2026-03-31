@@ -182,27 +182,79 @@ df_cohort1 = df_mortality_clean %>%
   filter(census_occ_code %in% cohort1_occ_codes)
 ```
 
+## Number of Deaths
+```{r}
+c1_num_deaths = df_cohort1 %>% 
+  group_by(census_occ_title) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop") %>% 
+  mutate(measure = "Number of Deaths",
+         level = "Overall",
+         percent_within_occupation = round(n / sum(n) * 100, 1),
+         `Number of workers (Percent within occ)` = paste0(format(n, big.mark = ","), 
+                                                         " (",
+                                                         percent_within_occupation,
+                                                         "%)")) %>% 
+  select(-n, -percent_within_occupation) %>% 
+  pivot_wider(names_from = census_occ_title,
+              values_from = `Number of workers (Percent within occ)`)
+
+c1_num_deaths %>% 
+  dt_table() 
+  
+```
+
+
 
 ## Education
 
 ### Overall
 ```{r}
 df_cohort1 %>% 
-  count(recode_educ_farmwork)
+  count(recode_educ_farmwork) %>% 
+  dt_table() %>% 
+  add_commas("n")
 ```
 ### By Occupation
 ```{r}
-df_cohort1 %>% 
-  group_by(census_occ_code,
-           census_occ_title) %>% 
-  count(recode_educ_farmwork) %>% 
-  mutate(percent_within_occupation = round(n / sum(n) * 100, 2)) %>% 
-  dt_table(page = F) %>% 
-  add_commas("n")
+  
+c1_education = df_cohort1 %>% 
+  group_by(census_occ_title, recode_educ_farmwork) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop_last") %>%
+  mutate(percent_within_occupation = round(n / sum(n) * 100, 1),
+         `Number of workers (Percent within occ)` = paste0(n, 
+                                                          " (",
+                                                          percent_within_occupation,
+                                                          "%)")) %>%
+  ungroup() %>% 
+  select(-n, -percent_within_occupation) %>% 
+  pivot_wider(names_from = census_occ_title,
+              values_from = `Number of workers (Percent within occ)`) %>% 
+  rename(level = recode_educ_farmwork) %>% 
+  mutate(measure = "Highest Level of Education") %>% 
+  relocate(measure, level) %>% 
+  arrange(level)
+  
+c1_education %>% 
+  dt_table(page = F) 
 ```
 
 
 
+
+
+
+
+
+
+
+
+
+```{r}
+df_cohort1 %>% 
+  
+```
 
 
 
