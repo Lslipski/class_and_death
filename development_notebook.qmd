@@ -170,6 +170,7 @@ df_mortality_clean %>%
 
 This section will limit the cohort to only 2 occupation codes: 
 ```{r}
+#| output: true
 cohort1_occ_codes = c("6050", "0205")
 occ_codes_of_interest %>% 
   filter(census_occ_code_2018 %in% cohort1_occ_codes) %>% 
@@ -184,6 +185,7 @@ df_cohort1 = df_mortality_clean %>%
 
 ## Number of Deaths
 ```{r}
+#| output: true
 c1_num_deaths = df_cohort1 %>% 
   group_by(census_occ_title) %>% 
   summarize(n = n_distinct(id),
@@ -210,6 +212,7 @@ c1_num_deaths %>%
 
 ### Overall
 ```{r}
+#| output: true
 df_cohort1 %>% 
   count(recode_educ_farmwork) %>% 
   dt_table() %>% 
@@ -217,6 +220,7 @@ df_cohort1 %>%
 ```
 ### By Occupation
 ```{r}
+#| output: true
 c1_education = df_cohort1 %>% 
   group_by(census_occ_title, recode_educ_farmwork) %>% 
   summarize(n = n_distinct(id),
@@ -250,6 +254,44 @@ c1_education %>%
 
 
 
+### By Occupation
+```{r}
+#| output: true
+c1_education_age = df_cohort1 %>% 
+  filter(recode_age_int >= 25) %>% 
+  group_by(census_occ_title, recode_educ_farmwork) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop_last") %>%
+  mutate(percent_within_occupation = round(n / sum(n) * 100, 1),
+         `Number of workers (Percent within occ)` = paste0(format(n, big.mark = ","), 
+                                                          " (",
+                                                          percent_within_occupation,
+                                                          "%)")) %>%
+  ungroup() %>% 
+  select(-n, -percent_within_occupation) %>% 
+  pivot_wider(names_from = census_occ_title,
+              values_from = `Number of workers (Percent within occ)`) %>% 
+  rename(level = recode_educ_farmwork) %>% 
+  mutate(measure = "Highest Level of Education") %>% 
+  relocate(measure, level) %>% 
+  arrange(level)
+  
+c1_education_age %>% 
+  dt_table(page = F) 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ## Marital Status
 
@@ -259,6 +301,7 @@ We may want to combine married/widowed/divorced with the domestic partnership ve
 
 ### Overall
 ```{r}
+#| output: true
 df_cohort1 %>% 
   count(recode_marital_status) %>% 
   dt_table() %>% 
@@ -268,6 +311,7 @@ df_cohort1 %>%
 
 ### By Occupation
 ```{r}
+#| output: true
 c1_marital_status = df_cohort1 %>% 
   group_by(census_occ_title, recode_marital_status) %>% 
   summarize(n = n_distinct(id),
@@ -294,6 +338,7 @@ c1_marital_status %>%
 
 ### Overall
 ```{r}
+#| output: true
 df_cohort1 %>% 
   count(recode_sex) %>% 
   dt_table() %>% 
@@ -302,6 +347,7 @@ df_cohort1 %>%
 
 ### By Occupation
 ```{r}
+#| output: true
 c1_sex = df_cohort1 %>% 
   group_by(census_occ_title, recode_sex) %>% 
   summarize(n = n_distinct(id),
@@ -332,6 +378,7 @@ We have a number of race codes that we still need to categorize. They're spelled
 
 ### Overall
 ```{r}
+#| output: true
 df_cohort1 %>% 
   count(recode_race) %>% 
   dt_table() %>% 
@@ -341,6 +388,7 @@ df_cohort1 %>%
 
 ### By Occupation
 ```{r}
+#| output: true
 c1_race = df_cohort1 %>% 
   group_by(census_occ_title, recode_race) %>% 
   summarize(n = n_distinct(id),
@@ -372,6 +420,7 @@ c1_race %>%
 
 ### Overall
 ```{r}
+#| output: true
 df_cohort1 %>% 
   summarize(mean_age_at_death = round(mean(recode_age_int, 
                                       na.rm = T), 1),
@@ -386,6 +435,7 @@ df_cohort1 %>%
 ### By Occupation
 
 ```{r}
+#| output: true
 c1_age_at_death = df_cohort1 %>% 
   group_by(census_occ_title) %>% 
   summarize(mean_age_at_death = round(mean(recode_age_int, 
@@ -409,6 +459,7 @@ c1_age_at_death %>%
 ### By Occupation and Sex
 
 ```{r}
+#| output: true
 c1_age_at_death_sex = df_cohort1 %>% 
   group_by(census_occ_title, recode_sex) %>% 
   summarize(mean_age_at_death = round(mean(recode_age_int, 
@@ -431,6 +482,7 @@ c1_age_at_death_sex %>%
 
 ### Categorical
 ```{r}
+#| output: true
 c1_age_at_death_cat = df_cohort1 %>% 
   mutate(age_cat = case_when(recode_age_int < 40 ~ "1. <40",
                              recode_age_int >=40 & recode_age_int <=55 ~ "2. 40-55",
@@ -441,7 +493,7 @@ c1_age_at_death_cat = df_cohort1 %>%
   group_by(census_occ_title, age_cat) %>% 
   summarize(num_in_category = n_distinct(id),
             .groups = "drop_last") %>% 
-  mutate(`percent in category` = round(num_in_category / sum(num_in_category) * 100, 2)) %>% 
+  mutate(`percent in category` = as.character(round(num_in_category / sum(num_in_category) * 100, 2))) %>% 
   select(census_occ_title, age_cat, `percent in category`) %>% 
   pivot_wider(names_from = census_occ_title,
               values_from = `percent in category`) %>% 
@@ -455,6 +507,20 @@ c1_age_at_death_cat %>%
 ```
 
 
+## Table 1
+```{r}
+#| output: true
+bind_rows(c1_num_deaths,
+          c1_education,
+          c1_education_age,
+          c1_marital_status,
+          c1_sex,
+          c1_race,
+          c1_age_at_death,
+          c1_age_at_death_sex,
+          c1_age_at_death_cat) %>% 
+  dt_table()
+```
 
 
 

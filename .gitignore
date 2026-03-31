@@ -3,3 +3,5 @@
 .RData
 .Ruserdata
 /data
+/development_notebook_files
+*.html
