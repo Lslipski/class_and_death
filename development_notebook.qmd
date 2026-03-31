@@ -429,6 +429,30 @@ c1_age_at_death_sex %>%
   dt_table()
 ```
 
+### Categorical
+```{r}
+c1_age_at_death_cat = df_cohort1 %>% 
+  mutate(age_cat = case_when(recode_age_int < 40 ~ "1. <40",
+                             recode_age_int >=40 & recode_age_int <=55 ~ "2. 40-55",
+                             recode_age_int > 55 & recode_age_int <=64 ~ "3. 55 - 64",
+                             recode_age_int > 64 ~ "4. 65+",
+                             is.na(recode_age_int) ~ "5. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(census_occ_title, age_cat) %>% 
+  summarize(num_in_category = n_distinct(id),
+            .groups = "drop_last") %>% 
+  mutate(`percent in category` = round(num_in_category / sum(num_in_category) * 100, 2)) %>% 
+  select(census_occ_title, age_cat, `percent in category`) %>% 
+  pivot_wider(names_from = census_occ_title,
+              values_from = `percent in category`) %>% 
+  mutate(measure = "Age at Death Percentage") %>% 
+  rename(level = age_cat) %>% 
+  relocate(measure, level) %>% 
+  arrange(level)
+  
+c1_age_at_death_cat %>% 
+  dt_table()
+```
 
 
 
