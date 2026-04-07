@@ -42,6 +42,7 @@ df_mortality_clean = load_ca_mortality_data(df = 'latest') %>%
   recode_sex() %>% 
   create_covid_death_flag() %>% 
   recode_marital_status() %>% 
+  recode_facility_of_death() %>% 
   join_industry_occupation()
 ```
 
@@ -254,7 +255,7 @@ c1_education %>%
 
 
 
-### By Occupation
+### By Occupation (Among those with Age >= 25)
 ```{r}
 #| output: true
 c1_education_age = df_cohort1 %>% 
@@ -507,18 +508,113 @@ c1_age_at_death_cat %>%
 ```
 
 
+
+## Country of Birth
+
+### Overall
+```{r}
+#| output: true
+df_cohort1 %>% 
+  mutate(country_of_birth = case_when(birth.country == "US" ~ "1. United States",
+                                      birth.country == "MX" ~ "2. Mexico",
+                                      TRUE ~ "3.Other")) %>% 
+  count(country_of_birth) %>% 
+  dt_table() %>% 
+  add_commas("n")
+```
+
+### By Occupation
+```{r}
+#| output: true
+c1_country_birth = df_cohort1 %>% 
+  mutate(country_of_birth = case_when(birth.country == "US" ~ "1. United States",
+                                      birth.country == "MX" ~ "2. Mexico",
+                                      TRUE ~ "3. Other")) %>% 
+  group_by(census_occ_title, country_of_birth) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop_last") %>%
+  mutate(percent_within_occupation = round(n / sum(n) * 100, 1),
+         `Number of workers (Percent within occ)` = paste0(format(n, big.mark = ","), 
+                                                          " (",
+                                                          percent_within_occupation,
+                                                          "%)")) %>%
+  ungroup() %>% 
+  select(-n, -percent_within_occupation) %>% 
+  pivot_wider(names_from = census_occ_title,
+              values_from = `Number of workers (Percent within occ)`) %>% 
+  rename(level = country_of_birth) %>% 
+  mutate(measure = "Country of Birth") %>% 
+  relocate(measure, level) %>% 
+  arrange(level)
+  
+c1_country_birth %>% 
+  dt_table(page = F) 
+```
+
+
+## Facility at Death
+
+### Overall
+```{r}
+#| output: true
+df_cohort1 %>% 
+  count(recode_facility_of_death) %>% 
+  mutate(percent = round(n / sum(n) * 100, 2)) %>% 
+  arrange(desc(n)) %>% 
+  dt_table() %>% 
+  add_commas("n")
+```
+
+
+### By Occupation
+```{r}
+#| output: true
+c1_facility_death = df_cohort1 %>% 
+  group_by(census_occ_title, recode_facility_of_death) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop_last") %>%
+  mutate(percent_within_occupation = round(n / sum(n) * 100, 1),
+         `Number of workers (Percent within occ)` = paste0(format(n, big.mark = ","), 
+                                                          " (",
+                                                          percent_within_occupation,
+                                                          "%)")) %>%
+  ungroup() %>% 
+  select(-n, -percent_within_occupation) %>% 
+  pivot_wider(names_from = census_occ_title,
+              values_from = `Number of workers (Percent within occ)`) %>% 
+  rename(level = recode_facility_of_death) %>% 
+  mutate(measure = "Facility of Death") %>% 
+  relocate(measure, level) %>% 
+  arrange(level)
+  
+c1_facility_death %>% 
+  dt_table(page = F) 
+```
+
+
+
+
+
+
+
+
+
+
+
+
 ## Table 1
 ```{r}
 #| output: true
 bind_rows(c1_num_deaths,
           c1_education,
-          c1_education_age,
           c1_marital_status,
           c1_sex,
           c1_race,
           c1_age_at_death,
           c1_age_at_death_sex,
-          c1_age_at_death_cat) %>% 
+          c1_age_at_death_cat,
+          c1_country_birth,
+          c1_facility_death) %>% 
   dt_table()
 ```
 
