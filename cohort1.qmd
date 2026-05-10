@@ -1,6 +1,6 @@
 ---
-title: "Class and Death Project Development Notebook"
-subtitle: "Exploration of cohort creation prior to analysis"
+title: "Class and Death: Workers Vs. Managers in Agriculture"
+subtitle: "Exploration of Differences by Class in Agricultural Work"
 author: "Luke Slipski"
 date: "Published on `r format(Sys.time(), '%m-%d-%y')`"
 format:
@@ -30,150 +30,6 @@ library("merced.clc")
 # after downloading to local from https://github.com/cran/icd
 library("icd") 
 ```
-
-# Main Data Loading
-
-The main data set includes the following filters:
-
-  -   State of residence is CA
-  
-```{r}
-# Get clean mortality dataset
-# This file is large and will take a minute to load
-df_mortality_clean = load_ca_mortality_data(df = 'latest') %>% 
-  get_ca_residence_only() %>% 
-  recode_race() %>%
-  recode_age() %>%
-  recode_education_farmworkers() %>%
-  recode_sex() %>% 
-  create_covid_death_flag() %>% 
-  recode_marital_status() %>% 
-  recode_facility_of_death() %>% 
-  join_industry_occupation()
-```
-
-
-# Industry and Occupation Code Cleaning
-
-I used the below code to remove industry and occupation fields that contained the `&` and `#` characters
-because there were duplicates with these when using `load_industry_occupation()`. This updated data file was saved to `E:/shared/heb_lab/data/nioccs/nioccs_coded_ind_occ_20230831_mortality.rds`, which is currently where
-the CAdeathserver package loads industry and occupation data from.
-
-```{r}
-#| echo: true
-#| eval: false
-# target <- c("&", "#") %>% paste(collapse = "|")
-# 
-# ind_occ_to_remove = load_industry_occupation() %>% 
-#   filter(if_any(contains("ind"), 
-#                 ~str_detect(.x, target)) |
-#            if_any(contains("occ"), 
-#                 ~str_detect(.x, target)))
-# 
-# df_ind_occ_all %>% saveRDS(.,
-#                            file = "E:/shared/heb_lab/data/nioccs/nioccs_coded_ind_occ_20230831_mortality.rds")
-```
-
-# Group Variables
-
-## Industry and Occupation 
-
-```{r}
-df_indocc <- df_mortality_clean %>% 
-  select(id,
-         industry,
-         occupation,
-         starts_with("census"),
-         starts_with("naics"),
-         starts_with("soc_"),
-         unexpected_naics_soc_combo) %>% 
-  distinct()
-```
-
-### Summary Review of Code Missingness
-
-This section takes the data set that was returned from the NIOCCS tool, which
-has a record for every unique industry + occupation combination in the original
-mortality data from 2023-08-31, and looks at the various industry and occupation
-standards to which the NIOCCS tool mapped the original mortality combinations. These
-are SOC (standard occupation classification) and Census codes. 
-
-Main Findings: 
-  -   SOC and census occupation are identically missing (~21k records)
-  -   There are fewer records missing census industry than census occupation, it is still too many to manually re-code (~15k records) 
-  -   The number of records missing BOTH census industry and census occupation information is much lower (1,650)
-
-
-### Codes of Interest
-
-Descriptions taken from [here](https://www2.census.gov/programs-surveys/cps/methodology/Occupation%20Codes.pdf)
-
-```{r}
-#| output: true
-occ_codes_of_interest = tribble(~census_occ_code_2018, ~description,
-                                "6050", "Miscellaneous Agricultural Workers",
-                                "6040", "Graders and sorters, agricultural products",
-                                "6005", "First-line supervisors of farming, fishing, and forestry workers",
-                                "6010", "Agricultural inspectors",
-                                "6020", "Animal breeders",
-                                "6115", "Fishing and hunting workers",
-                                "6120", "Forest and conservation workers",
-                                "6130", "Logging workers",
-                                "0205", "Farmers, ranchers, and other agricultural managers",
-                                "7810", "Butchers and other meat, poultry, and fish processing workers")
-
-occ_codes_of_interest %>% 
-  arrange(census_occ_code_2018) %>% 
-  dt_table(search = F,
-           page = F)
-```
-
-
-### Count of Mortality Records by Codes of Interest
-```{r}
-#| output: true
-df_indocc %>% 
-  filter(census_occ_code %in% occ_codes_of_interest$census_occ_code_2018) %>% 
-  count(census_occ_code, 
-        census_occ_title) %>% 
-  arrange(desc(n)) %>% 
-  dt_table() %>% 
-  add_commas("n")
-```
-
-
-## Race
-
-
-### Overall Cohort
-```{r}
-#| output: true
-df_mortality_clean %>% 
-  count(recode_race) %>% 
-  arrange(desc(n)) %>% 
-  dt_table(search = F,
-           page = F) %>% 
-  add_commas("n")
-```
-
-### Limited to Occupations of Interest
-```{r}
-#| output: true
-df_mortality_clean %>% 
-  filter(census_occ_code %in% occ_codes_of_interest$census_occ_code_2018) %>% 
-  count(census_occ_code,
-        census_occ_title,
-        recode_race) %>% 
-  arrange(census_occ_code,
-          census_occ_title,
-          desc(n)) %>% 
-  dt_table(search = F) %>% 
-  add_commas("n")
-```
-
-
-
-# Cohort 1: Limited to Ag Workers and Ag Managers
 
 This section will limit the cohort to only 2 occupation codes: 
 ```{r}
@@ -831,7 +687,8 @@ crfs %>%
 
 ##### By Occupation (Percentage)
 ```{r}
-aad_occupation_count_65 = df_under65 %>% 
+aad_occupation_count_65 = df_cohort1 %>% 
+  filter(recode_age_int < 65) %>% 
   ggplot(.,
          aes(recode_age_int)) +
   geom_histogram(bins = 51,
@@ -995,6 +852,7 @@ For now, I am shortening the reported codes to 3 characters and then joining to 
 
 #### Overall
 ```{r}
+#| output: TRUE
 df_cohort1 %>% 
   mutate(final.cause.of.death.icd10 = substr(final.cause.of.death.icd10, 1, 3)) %>% 
   group_by(final.cause.of.death.icd10) %>% 
@@ -1013,6 +871,7 @@ df_cohort1 %>%
 
 #### Managers
 ```{r}
+#| output: TRUE
 df_cohort1 %>% 
   mutate(final.cause.of.death.icd10 = substr(final.cause.of.death.icd10, 1, 3)) %>% 
   filter(census_occ_title == "Farmers, Ranchers, and Other Agricultural Managers") %>% 
@@ -1031,6 +890,7 @@ df_cohort1 %>%
 
 #### Workers
 ```{r}
+#| output: TRUE
 df_cohort1 %>% 
   mutate(final.cause.of.death.icd10 = substr(final.cause.of.death.icd10, 1, 3)) %>% 
   filter(census_occ_title == "Miscellaneous Agricultural Workers") %>% 
@@ -1046,6 +906,3 @@ df_cohort1 %>%
          num_deaths) %>% 
   dt_table()
 ```
-
-
-
