@@ -836,6 +836,14 @@ I manually added some code descriptions to the df_icd table because they did not
 :::
 
 ```{r}
+df_cod = df_cohort1 %>% 
+  mutate(final.cause.of.death.icd10 = substr(final.cause.of.death.icd10, 1, 3),
+         final.cause.of.death.icd10 = if_else(final.cause.of.death.icd10 == "",
+                                              NA,
+                                              final.cause.of.death.icd10))
+```
+
+```{r}
 df_icd = read_csv(here::here("data/icd_10_cm_codes_tuva.csv.gz"),
                   col_names = c("code",
                                 "billable",
@@ -864,7 +872,7 @@ df_icd %>%
 
 ```{r}
 # check that no deaths are joining to multiple codes. This should return empty set
-df_cohort1 %>% 
+df_cod %>% 
   left_join(df_icd,
             by = c("final.cause.of.death.icd10" = "code"),
             keep = TRUE) %>% 
@@ -875,15 +883,29 @@ df_cohort1 %>%
 
 ### Final Cause of Death
 
-Note, a number of reported ICD 10 CM codes in the data do not match to a real ICD 10 CM code.
-For now, I am shortening the reported codes to 3 characters and then joining to increase matching.
+:::{.callout-note}
+A number of reported ICD 10 CM codes in the data do not match to a real ICD 10 CM code.
+For now, I am shortening the reported codes to 3 characters and then joining to increase matching. Further some final.cause.of.death.icd10 values are empty strings. I'm converting to NA and filtering. 
+:::
 
+Number of records with Null cause of death
+```{r}
+#| output: true
+df_cod %>% 
+  filter(is.na(final.cause.of.death.icd10)) %>% 
+  count()
+```
+
+```{r}
+# filtering null causes of death
+df_cod = df_cod %>% 
+  filter(!is.na(final.cause.of.death.icd10))
+```
 
 #### Overall
 ```{r}
 #| output: TRUE
-df_cohort1 %>% 
-  mutate(final.cause.of.death.icd10 = substr(final.cause.of.death.icd10, 1, 3)) %>% 
+df_cod %>%  
   group_by(final.cause.of.death.icd10) %>% 
   summarize(num_deaths = n()) %>% 
   arrange(desc(num_deaths)) %>% 
@@ -901,8 +923,7 @@ df_cohort1 %>%
 #### Managers
 ```{r}
 #| output: TRUE
-df_cohort1 %>% 
-  mutate(final.cause.of.death.icd10 = substr(final.cause.of.death.icd10, 1, 3)) %>% 
+df_cod %>%  
   filter(census_occ_title == "Farmers, Ranchers, and Other Agricultural Managers") %>% 
   group_by(final.cause.of.death.icd10) %>% 
   summarize(num_deaths = n()) %>% 
@@ -920,8 +941,7 @@ df_cohort1 %>%
 #### Workers
 ```{r}
 #| output: TRUE
-df_cohort1 %>% 
-  mutate(final.cause.of.death.icd10 = substr(final.cause.of.death.icd10, 1, 3)) %>% 
+df_cod %>% 
   filter(census_occ_title == "Miscellaneous Agricultural Workers") %>% 
   group_by(final.cause.of.death.icd10) %>% 
   summarize(num_deaths = n()) %>% 
@@ -937,15 +957,62 @@ df_cohort1 %>%
 ```
 
 
+#### External Vs. Natural Causes
+
+I'm filtering out final causes of death that are NA.
+
+```{r}
+#| output: TRUE
+df_cod %>% 
+  left_join(df_icd,
+            by = c("final.cause.of.death.icd10" = "code"),
+            keep = TRUE) %>% 
+  group_by(census_occ_title, external_natural) %>% 
+  count() %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = "census_occ_title",
+              values_from = "n") %>% 
+  mutate(manager_percent = round(`Farmers, Ranchers, and Other Agricultural Managers` / sum(`Farmers, Ranchers, and Other Agricultural Managers`) * 100, 2),
+         worker_percent = round(`Miscellaneous Agricultural Workers` / sum(`Miscellaneous Agricultural Workers`) * 100, 2)) %>% 
+  dt_table()
+```
+
+
 #### Age Under 60
 
 :::{.callout-note}
 In the overall cohort, the sample is about 42% managers and 58% workers, but in the under 60 sample, this turns into about 22% managers and 78% workers. The overall sample is 52,786 deaths and the under 60 sample is 8,941 deaths.
 :::
 
+
+##### Percent of Total Cohort
+```{r}
+#| output: true
+df_cohort1 %>% 
+  mutate(under_over_60 = if_else(recode_age_int < 60, "Under 60", "60 or Over")) %>%
+  count(under_over_60) %>% 
+  mutate(percent = round(n / sum(n) * 100, 2)) %>% 
+  dt_table()
+```
+
+##### Percent of Total Cohort by Occupation
+```{r}
+#| output: true
+df_cohort1 %>% 
+  mutate(under_over_60 = if_else(recode_age_int < 60, "Under 60", "60 or Over")) %>%
+  count(census_occ_title, under_over_60) %>% 
+  pivot_wider(names_from = "census_occ_title",
+              values_from = "n") %>% 
+  mutate(manager_percent = round(`Farmers, Ranchers, and Other Agricultural Managers` / sum(`Farmers, Ranchers, and Other Agricultural Managers`) * 100, 2),
+         worker_percent = round(`Miscellaneous Agricultural Workers` / sum(`Miscellaneous Agricultural Workers`) * 100, 2)) %>% 
+  dt_table()
+```
+
+
+
 ##### Sample Sizes
 ```{r}
-df_cohort1 %>% 
+df_cod %>% 
   filter(recode_age_int < 60) %>% 
   group_by(census_occ_title) %>% 
   summarize(n = n_distinct(id),
@@ -966,9 +1033,8 @@ df_cohort1 %>%
 ##### Overall
 ```{r}
 #| output: TRUE
-df_cohort1 %>% 
-  filter(recode_age_int < 60) %>% 
-  mutate(final.cause.of.death.icd10 = substr(final.cause.of.death.icd10, 1, 3)) %>% 
+df_cod %>% 
+  filter(recode_age_int < 60) %>%  
   group_by(final.cause.of.death.icd10) %>% 
   summarize(num_deaths = n()) %>% 
   arrange(desc(num_deaths)) %>% 
@@ -985,9 +1051,8 @@ df_cohort1 %>%
 ##### Managers
 ```{r}
 #| output: TRUE
-df_cohort1 %>% 
+df_cod %>% 
   filter(recode_age_int < 60) %>% 
-  mutate(final.cause.of.death.icd10 = substr(final.cause.of.death.icd10, 1, 3)) %>% 
   filter(census_occ_title == "Farmers, Ranchers, and Other Agricultural Managers") %>% 
   group_by(final.cause.of.death.icd10) %>% 
   summarize(num_deaths = n()) %>% 
@@ -1005,9 +1070,8 @@ df_cohort1 %>%
 ##### Workers
 ```{r}
 #| output: TRUE
-df_cohort1 %>% 
+df_cod %>% 
   filter(recode_age_int < 60) %>%
-  mutate(final.cause.of.death.icd10 = substr(final.cause.of.death.icd10, 1, 3)) %>% 
   filter(census_occ_title == "Miscellaneous Agricultural Workers") %>% 
   group_by(final.cause.of.death.icd10) %>% 
   summarize(num_deaths = n()) %>% 
@@ -1022,8 +1086,22 @@ df_cohort1 %>%
   dt_table()
 ```
 
+##### External Vs. Natural Causes
 ```{r}
-
+#| output: TRUE
+df_cod %>% 
+  filter(recode_age_int < 60) %>%
+  left_join(df_icd,
+            by = c("final.cause.of.death.icd10" = "code"),
+            keep = TRUE) %>% 
+  group_by(census_occ_title, external_natural) %>% 
+  count() %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = "census_occ_title",
+              values_from = "n") %>% 
+  mutate(manager_percent = round(`Farmers, Ranchers, and Other Agricultural Managers` / sum(`Farmers, Ranchers, and Other Agricultural Managers`) * 100, 2),
+         worker_percent = round(`Miscellaneous Agricultural Workers` / sum(`Miscellaneous Agricultural Workers`) * 100, 2)) %>% 
+  dt_table()
 ```
 
 
