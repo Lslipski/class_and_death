@@ -8,6 +8,7 @@ format:
     toc: true
     toc-location: left
     toc-depth: 5
+    page-layout: full
 fig-cap-location: top
 editor:
   markdown:
@@ -554,6 +555,7 @@ deaths_year_occ %>%
 
 #### Overall
 ```{r}
+#| output: true
 aad_overall_dist = df_cohort1 %>% 
   ggplot(.,
          aes(recode_age_int)) +
@@ -568,6 +570,7 @@ aad_overall_dist
 
 #### By Occupation (Count of Deaths)
 ```{r}
+#| output: true
 aad_occupation_count = df_cohort1 %>% 
   ggplot(.,
          aes(recode_age_int)) +
@@ -584,6 +587,7 @@ aad_occupation_count
 
 #### By Occupation (Percent of Deaths)
 ```{r}
+#| output: true
 aad_occupation_pct = df_cohort1 %>% 
   ggplot(.,
          aes(recode_age_int)) +
@@ -600,6 +604,7 @@ aad_occupation_pct
   
   
 ```{r}
+#| output: true
 aad_occ_violin = df_cohort1 %>% 
   filter(!is.na(recode_age_int)) %>% 
   ggplot(.,
@@ -628,6 +633,7 @@ ks_distributions = df_cohort1 %>%
 
 ##### Alternative: Two-Sided
 ```{r}
+#| output: true
 ks.test(x = ks_distributions$`Farmers, Ranchers, and Other Agricultural Managers`,
         y = ks_distributions$`Miscellaneous Agricultural Workers`,
         alternative = "greater")
@@ -635,6 +641,7 @@ ks.test(x = ks_distributions$`Farmers, Ranchers, and Other Agricultural Managers
 
 ##### Alternative: Greater
 ```{r}
+#| output: true
 ks.test(x = ks_distributions$`Farmers, Ranchers, and Other Agricultural Managers`,
         y = ks_distributions$`Miscellaneous Agricultural Workers`,
         alternative = "greater")
@@ -658,8 +665,8 @@ crfs = df_cohort1 %>%
 
 ```
 
-##### Cumulative Relative Frequency
 ```{r}
+#| output: true
 crfs %>% 
   select(recode_age_int,
          cumulative_percent_worker,
@@ -682,6 +689,7 @@ crfs %>%
 
 ##### By Occupation (Percentage)
 ```{r}
+#| output: true
 aad_occupation_count_65 = df_cohort1 %>% 
   filter(recode_age_int < 65) %>% 
   ggplot(.,
@@ -701,6 +709,7 @@ aad_occupation_count_65
 
 
 ```{r}
+#| output: true
 df_cohort1 %>% 
   group_by(census_occ_title, 
            recode_age_int) %>% 
@@ -871,6 +880,7 @@ df_icd %>%
 ```
 
 ```{r}
+#| eval: false
 # check that no deaths are joining to multiple codes. This should return empty set
 df_cod %>% 
   left_join(df_icd,
@@ -1012,6 +1022,7 @@ df_cohort1 %>%
 
 ##### Sample Sizes
 ```{r}
+#| output: true
 df_cod %>% 
   filter(recode_age_int < 60) %>% 
   group_by(census_occ_title) %>% 
