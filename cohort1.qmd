@@ -20,7 +20,9 @@ execute:
 
 ```{r}
 library("tidyverse")
+library("ipumsr")
 library("lubridate")
+library("scales")
 # download CAdeathserver with remotes::install_git("https://github.com/Lslipski/CAdeathserver")
 library("CAdeathserver")
 # download merced.clc package with remotes::install_git("https://github.com/Lslipski/merced.clc")
@@ -32,7 +34,322 @@ library("merced.clc")
 library("icd") 
 ```
 
-This section will limit the cohort to only 2 occupation codes: 
+## Census Data
+
+### Variables
+
+```{r}
+#| output: true
+ipums_vars <- tribble(~`IPUMS code`, ~Description,
+        "YEAR", "Census Year",
+        "SAMPLE", "IPUMS Sample Identifier",
+        "SERIAL", "Household serial number",
+        "CBSERIAL", "Original Census Bureau household serial number",
+        "HHWT", "Household weight",
+        "CLUSTER", "Household cluster for variance estimation",
+        "STRATA", "Household strata for variance estimation",
+        "GQ", "Group quarters status",
+        "PERNUM", "Person number in sample unit",
+        "PERWT", "Person weight",
+        "SEX", "Sex",
+        "AGE", "Age",
+        "MARST", "Marital Status",
+        "RACE", "Race",
+        "HISPAN", "Hispanic Origin",
+        "BPL", "Birthplace",
+        "CITIZEN", "Citizenship status",
+        "INCWAGE", "Wage and salary income",
+        "INDNAICS", "Industry, NAICS classification",
+        "OCC", "Occupation code",
+        "OFFPOV", "A family is classified as poor by this measure if their total cash income falls below the official poverty threshold",
+        "STATEFIP", "State (FIPS code)",
+        "COUNTYFIP", "County (FIPS code)",
+        "UHRSWORK", "number of hours per week that the respondent usually worked in the previous 12 months",
+        "WKSWORK1", "number of weeks that the respondent worked for profit, pay, or as an unpaid family worker during the previous year",
+        "PUMA", "The Public Use Microdata Area (PUMA))")
+
+ipums_vars %>% 
+  arrange(`IPUMS code`) %>% 
+  dt_table(filter = F,
+           search = F,
+           row_nums = F,
+           page = T)
+```
+
+```{r, download ipums extract}
+#| eval: false
+# set ipums api to make request
+#ipumsr::set_ipums_api_key(Sys.getenv('ipumsapi'), save = TRUE)
+
+my_samples = paste0("us",
+                 seq(2015,2023, 1),
+                 "a")
+#only run to get new extract
+ipums_request <- ipumsr::define_extract_micro(collection = "usa",
+                             description = "Farm Worker and Manager Demographics",
+                             variables = ipums_vars %>% pull(`IPUMS code`),
+                             samples = my_samples)
+ipums_extract <- ipumsr::submit_extract(ipums_request)
+downloadable_extract <- wait_for_extract(ipums_extract)
+path_to_data_files <- download_extract(downloadable_extract,
+                                       download_dir = here::here("data"))
+```
+
+```{r}
+#| eval: false
+# this full dataset is huge, ~6gb because it includes all data across the country
+# for all variables. Filter this in next step and save off only what's needed.
+df_ipums <- read_ipums_micro(here::here("data/usa_00025.xml")) %>% 
+  janitor::clean_names()
+```
+```{r}
+#| eval: false
+# filter to California and the 2 occupation codes of interest
+df_ipums %>% 
+  filter(statefip == 6 &
+           occ %in% c(6050, 0205)) %>% 
+  write_rds(.,
+            file = here::here("data/demographics.rds"))
+```
+
+```{r}
+df_ipums = read_rds(here::here("data/demographics.rds")) %>% 
+  # remove ipums labels which interact oddly with dt_table
+  mutate(dplyr::across(.cols = dplyr::everything(),
+                       .fns = unclass),
+         sex = if_else(sex == 1 , "Male", "Female"),
+         occ = if_else(occ == 6050, "Worker", "Manager"),
+         age_cat = case_when(age < 40 ~ "1. <40",
+                             age >=40 & age <=55 ~ "2. 40-55",
+                             age > 55 & age <=64 ~ "3. 55 - 64",
+                             age > 64 ~ "4. 65+",
+                             is.na(age) ~ "5. Unknown",
+                             TRUE ~ "ISSUE"),
+         hispan = case_when(hispan == 0 ~ "Not Hispanic",
+                            hispan == 1 ~ "Mexican",
+                            hispan == 2 ~ "Puerto Rican",
+                            hispan == 3 ~ "Cuban",
+                            hispan == 4 ~ "Other",
+                            hispan == 9 ~ "Not reported",
+                            TRUE ~ "ISSUE"))
+```
+
+
+### Demographics
+
+#### Occupation Code
+```{r}
+#| output: true
+df_ipums %>% 
+  group_by(statefip,
+           year,
+           occ) %>% 
+  summarize(sum_people = sum(perwt, na.rm = T),
+            .groups = "drop") %>% 
+  dt_table() %>% 
+  add_commas("sum_people")
+```
+
+Same thing as a plot --
+```{r}
+#| output: true
+df_ipums %>% 
+  group_by(statefip,
+           year,
+           occ) %>% 
+  summarize(sum_people = sum(perwt, na.rm = T),
+            .groups = "drop") %>% 
+  ggplot(aes(x = year,
+             y = sum_people)) +
+  geom_line(aes(color = occ)) +
+  scale_y_continuous(labels = label_comma())
+```
+#### Occupation Code + Sex
+```{r}
+#| output: true
+df_ipums %>% 
+  group_by(year,
+           occ, 
+           sex) %>% 
+  summarize(sum_people = sum(perwt, na.rm = T),
+            .groups = "drop") %>% 
+  mutate(occ_sex = paste0(occ, " * ", sex)) %>% 
+  ggplot(aes(x = year,
+             y = sum_people)) +
+  geom_line(aes(color = occ_sex)) +
+  scale_y_continuous(labels = label_comma())
+```
+
+#### Occupation Code + Age
+
+##### Workers
+```{r}
+#| output: true
+df_ipums %>% 
+  filter(occ == 'Worker') %>% 
+  group_by(year,
+           occ, 
+           age) %>% 
+  summarize(sum_people = sum(perwt, na.rm = T),
+            .groups = "drop") %>% 
+  ggplot(aes(x = age,
+             y = sum_people)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~year)
+```
+
+Mean by year
+```{r}
+#| output: true
+df_ipums %>% 
+    filter(occ == 'Worker') %>% 
+    group_by(year,
+             occ) %>% 
+  summarize(mean = round(mean(age), 1),
+            .groups = "drop") %>% 
+  arrange(year) %>% 
+  dt_table()
+```
+
+
+
+##### Managers
+```{r}
+#| output: true
+df_ipums %>% 
+  filter(occ == 'Manager') %>% 
+  group_by(year,
+           occ, 
+           age) %>% 
+  summarize(sum_people = sum(perwt, na.rm = T),
+            .groups = "drop") %>% 
+  ggplot(aes(x = age,
+             y = sum_people)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~year)
+```
+
+Mean by year
+```{r}
+#| output: true
+df_ipums %>% 
+    filter(occ == 'Manager') %>% 
+    group_by(year,
+             occ) %>% 
+  summarize(mean = round(mean(age), 1),
+            .groups = "drop") %>% 
+  arrange(year) %>% 
+  dt_table()
+```
+
+Both on Same plot
+Mean by year
+```{r}
+#| output: true
+df_ipums %>% 
+    group_by(year,
+             occ) %>% 
+  summarize(mean_age = round(mean(age), 1),
+            .groups = "drop") %>% 
+  ggplot(aes(x = year,
+             y = mean_age)) +
+  geom_line(aes(colour = occ))
+  
+```
+
+
+
+#### Occupation Code + Age Category
+
+
+##### Workers
+```{r}
+#| output: true
+df_ipums %>% 
+  filter(occ == 'Worker') %>% 
+  group_by(year,
+           occ, 
+           age_cat) %>% 
+  summarize(sum_people = sum(perwt, na.rm = T),
+            .groups = "drop") %>% 
+  ggplot(aes(x = year,
+             y = sum_people)) +
+  geom_line(aes(color = age_cat)) +
+  scale_y_continuous(labels = label_comma())
+```
+
+##### Managers
+
+:::{.callout-warning}
+These look a little unstable -- might need to mention it in methods.
+:::
+```{r}
+#| output: true
+df_ipums %>% 
+  filter(occ == 'Manager') %>% 
+  group_by(year,
+           occ, 
+           age_cat) %>% 
+  summarize(sum_people = sum(perwt, na.rm = T),
+            .groups = "drop") %>% 
+  ggplot(aes(x = year,
+             y = sum_people)) +
+  geom_line(aes(color = age_cat)) +
+  scale_y_continuous(labels = label_comma())
+```
+
+#### Occupation Code + Hispanic Origin
+
+##### Workers
+```{r}
+#| output: true
+df_ipums %>% 
+  filter(occ == 'Worker') %>% 
+  group_by(year,
+           occ, 
+           hispan) %>% 
+  summarize(sum_people = sum(perwt, na.rm = T),
+            .groups = "drop") %>% 
+  ggplot(aes(x = year,
+             y = sum_people)) +
+  geom_line(aes(color = hispan)) +
+  scale_y_continuous(labels = label_comma())
+```
+
+##### Managers
+```{r}
+#| output: true
+df_ipums %>% 
+  filter(occ == 'Manager') %>% 
+  group_by(year,
+           occ, 
+           hispan) %>% 
+  summarize(sum_people = sum(perwt, na.rm = T),
+            .groups = "drop") %>% 
+  ggplot(aes(x = year,
+             y = sum_people)) +
+  geom_line(aes(color = hispan)) +
+  scale_y_continuous(labels = label_comma())
+```
+
+
+
+
+
+
+
+
+## Number of Deaths
+
+```{r}
+df_cohort1 = read_rds(here::here("data/df_cohort1.rds")) %>% 
+  mutate(month_of_death = as.integer(month.of.death),
+         worker_manager = if_else(census_occ_code == "6050",
+                                  "Worker",
+                                  "Manager"))
+```
+
+After looking into a number of occupation codes, this section will limit the cohort to only 2 occupation codes: 
 ```{r}
 #| output: true
 occ_codes_of_interest = tribble(~census_occ_code_2018, ~description,
@@ -54,10 +371,6 @@ occ_codes_of_interest %>%
 ```
 
 ```{r}
-df_cohort1 = read_rds(here::here("data/df_cohort1.rds"))
-```
-
-```{r}
 # original creation of cohort 1
 # df_cohort1 = df_mortality_clean %>% 
 #   filter(census_occ_code %in% cohort1_occ_codes)
@@ -69,9 +382,6 @@ df_cohort1 = read_rds(here::here("data/df_cohort1.rds"))
 # write_rds(df_cohort1,
 #           file = here::here("data/df_cohort1.rds"))
 ```
-
-
-## Number of Deaths
 
 ### Overall
 ```{r}
@@ -812,6 +1122,177 @@ c1_facility_death %>%
 
 
 
+## Seasonality
+
+### Overall by Month
+```{r}
+#| output: true
+df_cohort1 %>% 
+  count(month_of_death) %>% 
+  ggplot(aes(x = month_of_death,
+             y = n)) + 
+  geom_line() +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  ylab("Number of Deaths")
+```
+
+
+### Overall By Year By Month (All Years)
+```{r}
+#| output: true
+df_cohort1 %>% 
+  group_by(year.of.death, month_of_death) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop") %>% 
+  ggplot(aes(x = month_of_death,
+             y = n)) + 
+  geom_line() +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  ylab("Number of Deaths") +
+  facet_wrap(~year.of.death) 
+```
+
+
+
+### Overall By Year By Month (2020 and 2021 Removed for COVID)
+```{r}
+#| output: true
+df_cohort1 %>% 
+  filter(!year.of.death %in% c(2020, 2021)) %>% 
+  group_by(year.of.death, month_of_death) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop") %>% 
+  ggplot(aes(x = month_of_death,
+             y = n)) + 
+  geom_line() +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  ylab("Number of Deaths") +
+  facet_wrap(~year.of.death) 
+```
+
+
+### Managers by Month
+```{r}
+#| output: true
+df_cohort1 %>% 
+  filter(census_occ_title == "Farmers, Ranchers, and Other Agricultural Managers") %>% 
+  count(month_of_death) %>% 
+  ggplot(aes(x = month_of_death,
+             y = n)) + 
+  geom_line() +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  ylab("Number of Deaths")
+```
+
+
+### Managers By Year By Month (All Years)
+```{r}
+#| output: true
+df_cohort1 %>% 
+  filter(census_occ_title == "Farmers, Ranchers, and Other Agricultural Managers") %>% 
+  group_by(year.of.death, month_of_death) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop") %>% 
+  ggplot(aes(x = month_of_death,
+             y = n)) + 
+  geom_line() +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  ylab("Number of Deaths") +
+  facet_wrap(~year.of.death) 
+```
+
+
+
+### Managers By Year By Month (2020 and 2021 and 2022 Removed for COVID)
+```{r}
+#| output: true
+df_cohort1 %>% 
+  filter(census_occ_title == "Farmers, Ranchers, and Other Agricultural Managers") %>% 
+  filter(!year.of.death %in% c(2020, 2021, 2022)) %>% 
+  group_by(year.of.death, month_of_death) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop") %>% 
+  ggplot(aes(x = month_of_death,
+             y = n)) + 
+  geom_line() +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  theme(panel.grid.minor = element_blank()) +
+  ggtitle("Manager Deaths by Year and Month") +
+  ylab("Number of Deaths") +
+  facet_wrap(~year.of.death) 
+```
+
+
+
+### Workers by Month
+```{r}
+#| output: true
+df_cohort1 %>% 
+  filter(census_occ_title == "Miscellaneous Agricultural Workers") %>% 
+  count(month_of_death) %>% 
+  ggplot(aes(x = month_of_death,
+             y = n)) + 
+  geom_line() +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  ylab("Number of Deaths")
+```
+
+
+### Workers By Year By Month (All Years)
+```{r}
+#| output: true
+df_cohort1 %>% 
+  filter(census_occ_title == "Miscellaneous Agricultural Workers") %>% 
+  group_by(year.of.death, month_of_death) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop") %>% 
+  ggplot(aes(x = month_of_death,
+             y = n)) + 
+  geom_line() +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  ylab("Number of Deaths") +
+  facet_wrap(~year.of.death) 
+```
+
+
+
+### Workers By Year By Month (2020 and 2021 and 2022 Removed for COVID)
+```{r}
+#| output: true
+df_cohort1 %>% 
+  filter(census_occ_title == "Miscellaneous Agricultural Workers") %>% 
+  filter(!year.of.death %in% c(2020, 2021, 2022)) %>% 
+  group_by(year.of.death, month_of_death) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop") %>% 
+  ggplot(aes(x = month_of_death,
+             y = n)) + 
+  geom_line() +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  theme(panel.grid.minor = element_blank()) +
+  ggtitle("Worker Deaths by Year and Month") +
+  ylab("Number of Deaths") +
+  facet_wrap(~year.of.death) 
+```
+
+### Overall Death Cohort by Year by Month
+```{r}
+#| output: true
+CAdeathserver::load_ca_mortality_data()  %>% 
+  mutate(month_of_death = as.integer(month.of.death)) %>% 
+  filter(!year.of.death %in% c(2013, 2014, 2020, 2021, 2022)) %>% 
+  group_by(year.of.death, month_of_death) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop") %>% 
+  ggplot(aes(x = month_of_death,
+             y = n)) + 
+  geom_line() +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  theme(panel.grid.minor = element_blank()) +
+  ggtitle("All Deaths by Year and Month") +
+  ylab("Number of Deaths") +
+  facet_wrap(~year.of.death) 
+```
 
 
 
@@ -1115,6 +1596,208 @@ df_cod %>%
   dt_table()
 ```
 
+
+
+
+#### Age 60 or Over
+
+##### Percent of Total Cohort
+```{r}
+#| output: true
+df_cohort1 %>% 
+  mutate(under_over_60 = if_else(recode_age_int < 60, "Under 60", "60 or Over")) %>%
+  count(under_over_60) %>% 
+  mutate(percent = round(n / sum(n) * 100, 2)) %>% 
+  dt_table()
+```
+
+##### Percent of Total Cohort by Occupation
+```{r}
+#| output: true
+df_cohort1 %>% 
+  mutate(under_over_60 = if_else(recode_age_int < 60, "Under 60", "60 or Over")) %>%
+  count(census_occ_title, under_over_60) %>% 
+  pivot_wider(names_from = "census_occ_title",
+              values_from = "n") %>% 
+  mutate(manager_percent = round(`Farmers, Ranchers, and Other Agricultural Managers` / sum(`Farmers, Ranchers, and Other Agricultural Managers`) * 100, 2),
+         worker_percent = round(`Miscellaneous Agricultural Workers` / sum(`Miscellaneous Agricultural Workers`) * 100, 2)) %>% 
+  dt_table()
+```
+
+
+
+##### Sample Sizes
+```{r}
+#| output: true
+df_cod %>% 
+  filter(recode_age_int >= 60) %>% 
+  group_by(census_occ_title) %>% 
+  summarize(n = n_distinct(id),
+            .groups = "drop") %>% 
+  mutate(measure = "Number of Deaths",
+         level = "Overall",
+         percent_within_occupation = round(n / sum(n) * 100, 1),
+         `Number of workers (Percent within occ)` = paste0(format(n, big.mark = ","), 
+                                                         " (",
+                                                         percent_within_occupation,
+                                                         "%)")) %>% 
+  select(-n, -percent_within_occupation) %>% 
+  pivot_wider(names_from = census_occ_title,
+              values_from = `Number of workers (Percent within occ)`) %>% 
+  dt_table()
+```
+
+##### Overall
+```{r}
+#| output: TRUE
+df_cod %>% 
+  filter(recode_age_int >= 60) %>%  
+  group_by(final.cause.of.death.icd10) %>% 
+  summarize(num_deaths = n()) %>% 
+  arrange(desc(num_deaths)) %>% 
+  left_join(df_icd,
+            by = c("final.cause.of.death.icd10" = "code"),
+            keep = TRUE) %>% 
+  select(final.cause.of.death.icd10,
+         code,
+         short_desc,
+         num_deaths) %>% 
+  dt_table()
+```
+
+##### Managers
+```{r}
+#| output: TRUE
+df_cod %>% 
+  filter(recode_age_int >= 60) %>% 
+  filter(census_occ_title == "Farmers, Ranchers, and Other Agricultural Managers") %>% 
+  group_by(final.cause.of.death.icd10) %>% 
+  summarize(num_deaths = n()) %>% 
+  arrange(desc(num_deaths)) %>% 
+  left_join(df_icd,
+            by = c("final.cause.of.death.icd10" = "code"),
+            keep = TRUE) %>% 
+  select(final.cause.of.death.icd10,
+         code,
+         short_desc,
+         num_deaths) %>% 
+  dt_table()
+```
+
+##### Workers
+```{r}
+#| output: TRUE
+df_cod %>% 
+  filter(recode_age_int >= 60) %>%
+  filter(census_occ_title == "Miscellaneous Agricultural Workers") %>% 
+  group_by(final.cause.of.death.icd10) %>% 
+  summarize(num_deaths = n()) %>% 
+  arrange(desc(num_deaths)) %>% 
+  left_join(df_icd,
+            by = c("final.cause.of.death.icd10" = "code"),
+            keep = TRUE) %>% 
+  select(final.cause.of.death.icd10,
+         code,
+         short_desc,
+         num_deaths) %>% 
+  dt_table()
+```
+
+##### External Vs. Natural Causes
+```{r}
+#| output: TRUE
+df_cod %>% 
+  filter(recode_age_int >= 60) %>%
+  left_join(df_icd,
+            by = c("final.cause.of.death.icd10" = "code"),
+            keep = TRUE) %>% 
+  group_by(census_occ_title, external_natural) %>% 
+  count() %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = "census_occ_title",
+              values_from = "n") %>% 
+  mutate(manager_percent = round(`Farmers, Ranchers, and Other Agricultural Managers` / sum(`Farmers, Ranchers, and Other Agricultural Managers`) * 100, 2),
+         worker_percent = round(`Miscellaneous Agricultural Workers` / sum(`Miscellaneous Agricultural Workers`) * 100, 2)) %>% 
+  dt_table()
+```
+
+
+
+
+
+
+## Death Rates
+
+
+### Year + Occupation
+```{r}
+df_ipums_occ = df_ipums %>% 
+  group_by(year,
+           occ) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop") %>% 
+  rename(worker_manager = occ)
+  
+df_cohort1_occ = df_cohort1 %>% 
+  group_by(year.of.death,
+           worker_manager) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+df_rate_occ = df_ipums_occ %>% 
+  left_join(df_cohort1_occ,
+            by = c("year","worker_manager")) %>% 
+  mutate(death_rate_per_100k = sum_deaths / (sum_people / 100000))
+```
+
+```{r}
+#| output: true
+df_rate_occ %>% 
+  ggplot(aes(x = year,
+             y = death_rate_per_100k)) +
+  geom_line(aes(colour = worker_manager))
+```
+
+### Year + Occupation + Age Category
+```{r}
+df_ipums_occ_age = df_ipums %>% 
+  group_by(year,
+           occ,
+           age_cat) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop") %>% 
+  rename(worker_manager = occ)
+  
+df_cohort1_occ_age = df_cohort1 %>%
+  mutate(age_cat = case_when(recode_age_int < 40 ~ "1. <40",
+                             recode_age_int >=40 & recode_age_int <=55 ~ "2. 40-55",
+                             recode_age_int > 55 & recode_age_int <=64 ~ "3. 55 - 64",
+                             recode_age_int > 64 ~ "4. 65+",
+                             is.na(recode_age_int) ~ "5. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+df_rate_occ_age = df_ipums_occ_age %>% 
+  left_join(df_cohort1_occ_age,
+            by = c("year","worker_manager", "age_cat")) %>% 
+  mutate(death_rate_per_100k = sum_deaths / (sum_people / 100000))
+```
+
+#### Under 40
+```{r}
+#| output: true
+df_rate_occ_age %>% 
+  filter(age_cat == "1. <40") %>% 
+  ggplot(aes(x = year,
+             y = death_rate_per_100k)) +
+  geom_line(aes(colour = worker_manager))
+```
 
 
 
