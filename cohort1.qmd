@@ -102,6 +102,7 @@ path_to_data_files <- download_extract(downloadable_extract,
 df_ipums <- read_ipums_micro(here::here("data/usa_00025.xml")) %>% 
   janitor::clean_names()
 ```
+
 ```{r}
 #| eval: false
 # filter to California and the 2 occupation codes of interest
@@ -121,7 +122,7 @@ df_ipums = read_rds(here::here("data/demographics.rds")) %>%
          occ = if_else(occ == 6050, "Worker", "Manager"),
          age_cat = case_when(age < 40 ~ "1. <40",
                              age >=40 & age <=55 ~ "2. 40-55",
-                             age > 55 & age <=64 ~ "3. 55 - 64",
+                             age > 55 & age <=64 ~ "3. 56-64",
                              age > 64 ~ "4. 65+",
                              is.na(age) ~ "5. Unknown",
                              TRUE ~ "ISSUE"),
@@ -181,6 +182,20 @@ df_ipums %>%
 ```
 
 #### Occupation Code + Age
+
+##### Overall
+```{r}
+df_ipums %>% 
+  group_by(year,
+           occ, 
+           age) %>% 
+  summarize(sum_people = sum(perwt, na.rm = T),
+            .groups = "drop") %>% 
+  ggplot(aes(x = age,
+             y = sum_people)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~year)
+```
 
 ##### Workers
 ```{r}
@@ -683,7 +698,7 @@ c1_age_at_death_sex %>%
 c1_age_at_death_cat = df_cohort1 %>% 
   mutate(age_cat = case_when(recode_age_int < 40 ~ "1. <40",
                              recode_age_int >=40 & recode_age_int <=55 ~ "2. 40-55",
-                             recode_age_int > 55 & recode_age_int <=64 ~ "3. 55 - 64",
+                             recode_age_int > 55 & recode_age_int <=64 ~ "3. 56-64",
                              recode_age_int > 64 ~ "4. 65+",
                              is.na(recode_age_int) ~ "5. Unknown",
                              TRUE ~ "ISSUE")) %>% 
@@ -1728,7 +1743,6 @@ df_cod %>%
 
 ## Death Rates
 
-
 ### Year + Occupation
 ```{r}
 df_ipums_occ = df_ipums %>% 
@@ -1748,7 +1762,7 @@ df_cohort1_occ = df_cohort1 %>%
 df_rate_occ = df_ipums_occ %>% 
   left_join(df_cohort1_occ,
             by = c("year","worker_manager")) %>% 
-  mutate(death_rate_per_100k = sum_deaths / (sum_people / 100000))
+  mutate(death_rate_per_100k = sum_deaths / sum_people * 100000)
 ```
 
 ```{r}
@@ -1758,6 +1772,58 @@ df_rate_occ %>%
              y = death_rate_per_100k)) +
   geom_line(aes(colour = worker_manager))
 ```
+
+
+
+
+
+### Year + Occupation + Sex
+```{r}
+df_ipums_occ_sex = df_ipums %>% 
+  mutate(sex = tolower(sex)) %>% 
+  group_by(year,
+           occ,
+           sex) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop") %>% 
+  rename(worker_manager = occ)
+  
+df_cohort1_occ_sex = df_cohort1 %>%
+  group_by(year.of.death,
+           worker_manager,
+           recode_sex) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death,
+         sex = recode_sex)
+  
+df_rate_occ_sex = df_ipums_occ_sex %>% 
+  left_join(df_cohort1_occ_sex,
+            by = c("year","worker_manager", "sex")) %>% 
+  mutate(death_rate_per_100k = sum_deaths / (sum_people / 100000))
+```
+
+
+#### Female
+```{r}
+#| output: true
+df_rate_occ_sex %>% 
+  filter(sex == "female") %>% 
+  ggplot(aes(x = year,
+             y = death_rate_per_100k)) +
+  geom_line(aes(colour = worker_manager))
+```
+
+#### Male
+```{r}
+#| output: true
+df_rate_occ_sex %>% 
+  filter(sex == "male") %>% 
+  ggplot(aes(x = year,
+             y = death_rate_per_100k)) +
+  geom_line(aes(colour = worker_manager))
+```
+
 
 ### Year + Occupation + Age Category
 ```{r}
@@ -1772,7 +1838,7 @@ df_ipums_occ_age = df_ipums %>%
 df_cohort1_occ_age = df_cohort1 %>%
   mutate(age_cat = case_when(recode_age_int < 40 ~ "1. <40",
                              recode_age_int >=40 & recode_age_int <=55 ~ "2. 40-55",
-                             recode_age_int > 55 & recode_age_int <=64 ~ "3. 55 - 64",
+                             recode_age_int > 55 & recode_age_int <=64 ~ "3. 56-64",
                              recode_age_int > 64 ~ "4. 65+",
                              is.na(recode_age_int) ~ "5. Unknown",
                              TRUE ~ "ISSUE")) %>% 
@@ -1786,8 +1852,162 @@ df_cohort1_occ_age = df_cohort1 %>%
 df_rate_occ_age = df_ipums_occ_age %>% 
   left_join(df_cohort1_occ_age,
             by = c("year","worker_manager", "age_cat")) %>% 
-  mutate(death_rate_per_100k = sum_deaths / (sum_people / 100000))
+  mutate(death_rate_per_100k = sum_deaths / sum_people)
 ```
+
+#### Indirect Standardization
+
+##### Age Categorical
+```{r}
+df_worker_rates_agecat = df_cohort1_occ_age %>% 
+  filter(worker_manager == "Worker" &
+          age_cat != "5. Unknown") %>% 
+  left_join(df_ipums_occ_age,
+            by = c("year","worker_manager", "age_cat")) %>% 
+  mutate(death_rate = sum_deaths / sum_people)
+  
+df_manager_indirect_rates_agecat = df_ipums %>% 
+  filter(occ == "Manager" &
+          age_cat != "5. Unknown") %>% 
+  group_by(year,
+           age_cat) %>% 
+  summarize(num_people = sum(perwt),
+            .groups = "drop") %>% 
+  left_join(df_worker_rates_agecat %>% 
+              select(year, age_cat, death_rate),
+            by = c("year", "age_cat")) %>% 
+  mutate(expected_deaths = round(num_people * death_rate, 2)) %>% 
+  left_join(df_cohort1_occ_age %>% 
+              filter(worker_manager == "Manager"),
+            by = c("year", "age_cat"))
+  
+std_mort_ratio_years_age = df_manager_indirect_rates_agecat %>% 
+  group_by(year) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths)) %>% 
+  mutate(std_mortality_ratio = round(total_observed / total_expected, 2))
+```
+
+```{r}
+std_mort_ratio_years_age %>% 
+  dt_table()
+```
+
+##### Sex
+```{r}
+df_cohort1_occ_sex = df_cohort1 %>%
+  group_by(year.of.death,
+           worker_manager,
+           recode_sex) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death,
+         sex = recode_sex)
+  
+df_worker_rates_sex = df_cohort1_occ_sex %>% 
+  mutate(sex = str_to_title(sex)) %>% 
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_ipums_occ_sex %>% 
+              mutate(sex = str_to_title(sex)),
+            by = c("year","worker_manager", "sex")) %>% 
+  mutate(death_rate = sum_deaths / sum_people)
+  
+df_manager_indirect_rates_sex = df_ipums %>% 
+  filter(occ == "Manager") %>% 
+  group_by(year,
+           sex) %>% 
+  summarize(num_people = sum(perwt),
+            .groups = "drop") %>% 
+  left_join(df_worker_rates_sex %>% 
+              select(year, sex, death_rate),
+            by = c("year", "sex")) %>% 
+  mutate(expected_deaths = round(num_people * death_rate,2)) %>% 
+  left_join(df_cohort1_occ_sex %>% 
+              mutate(sex = str_to_title(sex)) %>% 
+              filter(worker_manager == "Manager"),
+            by = c("year", "sex"))
+  
+std_mort_ratio_years_sex = df_manager_indirect_rates_sex %>% 
+  group_by(year, sex) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(std_mortality_ratio = round(total_observed / total_expected, 2))
+```
+
+```{r}
+std_mort_ratio_years_sex %>% 
+  dt_table()
+```
+
+
+##### Age + Sex
+```{r}
+df_cohort1_occ_age_sex = df_cohort1 %>%
+  mutate(age_cat = case_when(recode_age_int < 40 ~ "1. <40",
+                             recode_age_int >=40 & recode_age_int <=55 ~ "2. 40-55",
+                             recode_age_int > 55 & recode_age_int <=64 ~ "3. 56-64",
+                             recode_age_int > 64 ~ "4. 65+",
+                             is.na(recode_age_int) ~ "5. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat,
+           recode_sex) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death,
+         sex = recode_sex)
+  
+df_ipums_occ_age_sex = df_ipums %>% 
+  mutate(sex = tolower(sex)) %>% 
+  group_by(year,
+           occ,
+           age_cat,
+           sex) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop") %>% 
+  rename(worker_manager = occ)
+  
+df_worker_rates_age_sex = df_cohort1_occ_age_sex %>% 
+  mutate(sex = str_to_title(sex)) %>% 
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_ipums_occ_age_sex %>% 
+              mutate(sex = str_to_title(sex)),
+            by = c("year","worker_manager", "age_cat", "sex")) %>% 
+  mutate(death_rate = sum_deaths / sum_people) %>% 
+  filter(!age_cat == "5. Unknown")
+  
+df_manager_indirect_rates_age_sex = df_ipums %>% 
+  filter(occ == "Manager") %>% 
+  group_by(year,
+           age_cat,
+           sex) %>% 
+  summarize(num_people = sum(perwt),
+            .groups = "drop") %>% 
+  left_join(df_worker_rates_age_sex %>% 
+              select(year, age_cat, sex, death_rate),
+            by = c("year", "age_cat", "sex")) %>% 
+  mutate(expected_deaths = round(num_people * death_rate,2)) %>% 
+  left_join(df_cohort1_occ_age_sex %>% 
+              mutate(sex = str_to_title(sex)) %>% 
+              filter(worker_manager == "Manager"),
+            by = c("year", "age_cat", "sex"))
+  
+std_mort_ratio_years_age_sex = df_manager_indirect_rates_age_sex %>% 
+  group_by(year, age_cat, sex) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(std_mortality_ratio = round(total_observed / total_expected, 2))
+```
+
+```{r}
+std_mort_ratio_years_age_sex %>% 
+  dt_table()
+```
+
+
 
 #### Under 40
 ```{r}
@@ -1800,12 +2020,113 @@ df_rate_occ_age %>%
 ```
 
 
+#### 40-55
+```{r}
+#| output: true
+df_rate_occ_age %>% 
+  filter(age_cat == "2. 40-55") %>% 
+  ggplot(aes(x = year,
+             y = death_rate_per_100k)) +
+  geom_line(aes(colour = worker_manager))
+```
+
+#### 56-64
+```{r}
+#| output: true
+df_rate_occ_age %>% 
+  filter(age_cat == "3. 56-64") %>% 
+  ggplot(aes(x = year,
+             y = death_rate_per_100k)) +
+  geom_line(aes(colour = worker_manager))
+```
+
+
+#### 65+
+```{r}
+#| output: true
+df_rate_occ_age %>% 
+  filter(age_cat == "4. 65+") %>% 
+  ggplot(aes(x = year,
+             y = death_rate_per_100k)) +
+  geom_line(aes(colour = worker_manager))
+```
 
 
 
+### Occupation + Age Continuous
+```{r}
+df_ipums_occ_age_cont = df_ipums %>% 
+  group_by(occ,
+           age) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop") %>% 
+  rename(worker_manager = occ)
+  
+df_cohort1_occ_age_cont = df_cohort1 %>% 
+  group_by(worker_manager,
+           recode_age_int) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(age = recode_age_int)
+  
+df_rate_occ_age_cont = df_ipums_occ_age_cont %>% 
+  left_join(df_cohort1_occ_age_cont,
+            by = c("worker_manager", "age")) %>% 
+  mutate(death_rate_per_100k = round(sum_deaths / (sum_people / 100000), 2))
+```
 
 
+```{r}
+#| output: true
+df_rate_occ_age_cont %>% 
+  ggplot(aes(x = age,
+             y = death_rate_per_100k)) +
+  geom_line(aes(colour = worker_manager))
+```
+
+```{r}
+df_rate_occ_age_cont %>% 
+  select(age,
+         worker_manager,
+         death_rate_per_100k) %>% 
+  pivot_wider(names_from = "worker_manager",
+              values_from = "death_rate_per_100k") %>%
+  mutate(Worker_greater = if_else(Worker > Manager, 1, 0)) %>% 
+  arrange(age) %>% 
+  dt_table()
+```
+
+### Year + Occupation + Age Continuous
+```{r}
+df_ipums_occ_age_cont_year = df_ipums %>% 
+  group_by(year,
+           occ,
+           age) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop") %>% 
+  rename(worker_manager = occ)
+  
+df_cohort1_occ_age_cont_year = df_cohort1 %>% 
+  group_by(year.of.death,
+           worker_manager,
+           recode_age_int) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death,
+         age = recode_age_int)
+  
+df_rate_occ_age_cont_year = df_ipums_occ_age_cont_year %>% 
+  left_join(df_cohort1_occ_age_cont_year,
+            by = c("year", "worker_manager", "age")) %>% 
+  mutate(death_rate_per_100k = round(sum_deaths / (sum_people / 100000), 2))
+```
 
 
-
-
+```{r}
+#| output: true
+df_rate_occ_age_cont_year %>% 
+  ggplot(aes(x = age,
+             y = death_rate_per_100k)) +
+  geom_line(aes(colour = worker_manager)) +
+  facet_wrap(~year)
+```

@@ -1048,4 +1048,54 @@ df_cohort1 %>%
 ```
 
 
+## Missing Occupation Code
+
+
+### Occupation Code Null or 9900 Race
+```{r}
+df_mortality_clean %>% 
+  filter(is.na(census_occ_code) |
+          census_occ_code == 9900) %>% 
+  group_by(recode_race) %>% 
+  summarize(num_people = n_distinct(id)) %>% 
+  arrange(desc(num_people)) %>% 
+  dt_table() %>% 
+  add_commas("num_people")
+```
+
+### Occupation Code Null Race
+```{r}
+df_mortality_clean %>% 
+  filter(is.na(census_occ_code)) %>% 
+  group_by(recode_race) %>% 
+  summarize(num_people = n_distinct(id)) %>% 
+  arrange(desc(num_people)) %>% 
+  dt_table() %>% 
+  add_commas("num_people")
+```
+
+### Occupation Code 9900 Race
+```{r}
+df_mortality_clean %>% 
+  filter(census_occ_code == 9900) %>% 
+  group_by(recode_race) %>% 
+  summarize(num_people = n_distinct(id)) %>% 
+  arrange(desc(num_people)) %>% 
+  dt_table() %>% 
+  add_commas("num_people")
+```
+
+### Occupation Code Null or 9900 Industry / OCC
+```{r}
+df_mortality_clean %>% 
+  filter(is.na(census_occ_code) |
+          census_occ_code == 9900) %>% 
+  count(industry_title, occupation_title) %>% 
+  arrange(desc(n)) %>% 
+  dt_table()
+```
+
+
+
+
 
