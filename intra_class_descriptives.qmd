@@ -61,11 +61,11 @@ df_ipums = read_rds(here::here("data/demographics.rds")) %>%
                             hispan == 4 ~ "Other",
                             hispan == 9 ~ "Not reported",
                             TRUE ~ "ISSUE"),
-         race = case_when(race == 1 ~ "White",
+         race = case_when(hispan %in% c(1,2,3,4) ~ "Hispanic",
+                          race == 1 ~ "White",
                           race == 2 ~ "Black",
                           race == 3 ~ "American Indian / Native American",
                           race %in% c(4,5,6) ~ "Asian / Pacific Islander",
-                          hispan %in% c(1,2,3,4) ~ "Hispanic",
                           TRUE ~ "Other"))
 ```
 
@@ -227,13 +227,12 @@ crude_death_rate_race_year_white %>%
 
 #### Age Categorical
 
-Use white rates as references. Excluding 2020.
+Use white rates as references. 
 
 ```{r}
 df_manager_deaths_age_whites = df_cohort1 %>% 
   mutate(white_non_white = if_else(recode_race == "White", "White", "Non-White")) %>% 
   filter(worker_manager == "Manager" &
-           year.of.death != 2020 &
            white_non_white == "White") %>% 
   group_by(year.of.death, 
            age_cat) %>% 
@@ -243,7 +242,6 @@ df_manager_deaths_age_whites = df_cohort1 %>%
 df_manager_people_age_whites = df_ipums %>% 
   mutate(white_non_white = if_else(race == "White", "White", "Non-White")) %>% 
   filter(worker_manager == "Manager" &
-         year != 2020 &
            white_non_white == "White") %>% 
   group_by(year, 
            age_cat) %>% 
@@ -263,7 +261,6 @@ df_manager_rates_age_whites = df_manager_deaths_age_whites %>%
 df_manager_deaths_age_nonwhites = df_cohort1 %>% 
   mutate(white_non_white = if_else(recode_race == "White", "White", "Non-White")) %>% 
   filter(worker_manager == "Manager" &
-           year.of.death != 2020 &
            white_non_white == "Non-White") %>% 
   group_by(year.of.death, 
            age_cat) %>% 
@@ -273,7 +270,6 @@ df_manager_deaths_age_nonwhites = df_cohort1 %>%
 df_manager_people_age_nonwhites = df_ipums %>% 
   mutate(white_non_white = if_else(race == "White", "White", "Non-White")) %>% 
   filter(worker_manager == "Manager" &
-         year != 2020 &
            white_non_white == "Non-White") %>% 
   group_by(year, 
            age_cat) %>% 
@@ -301,37 +297,6 @@ df_manager_std_mortality_rate_age_nonwhites %>%
   dt_table()
 ```
 
-
-
-```{r}
-df_worker_rates_agecat = df_cohort1_occ_age %>% 
-  filter(worker_manager == "Worker" &
-          age_cat != "5. Unknown") %>% 
-  left_join(df_ipums_occ_age,
-            by = c("year","worker_manager", "age_cat")) %>% 
-  mutate(death_rate = sum_deaths / sum_people)
-  
-df_manager_indirect_rates_agecat = df_ipums %>% 
-  filter(occ == "Manager" &
-          age_cat != "5. Unknown") %>% 
-  group_by(year,
-           age_cat) %>% 
-  summarize(num_people = sum(perwt),
-            .groups = "drop") %>% 
-  left_join(df_worker_rates_agecat %>% 
-              select(year, age_cat, death_rate),
-            by = c("year", "age_cat")) %>% 
-  mutate(expected_deaths = round(num_people * death_rate, 2)) %>% 
-  left_join(df_cohort1_occ_age %>% 
-              filter(worker_manager == "Manager"),
-            by = c("year", "age_cat"))
-  
-std_mort_ratio_years_age = df_manager_indirect_rates_agecat %>% 
-  group_by(year) %>% 
-  summarize(total_expected = sum(expected_deaths),
-            total_observed = sum(sum_deaths)) %>% 
-  mutate(std_mortality_ratio = round(total_observed / total_expected, 2))
-```
 
 
 

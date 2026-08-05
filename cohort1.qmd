@@ -33,6 +33,45 @@ library("merced.clc")
 # after downloading to local from https://github.com/cran/icd
 library("icd") 
 ```
+# Load
+```{r}
+df_cohort1 = read_rds(here::here("data/df_cohort1.rds")) %>% 
+  mutate(month_of_death = as.integer(month.of.death),
+         worker_manager = if_else(census_occ_code == "6050",
+                                  "Worker",
+                                  "Manager"),
+         white_non_white = if_else(recode_race == "White", "White", "Non-White")) 
+```
+
+```{r}
+df_ipums = read_rds(here::here("data/demographics.rds")) %>% 
+  # remove ipums labels which interact oddly with dt_table
+  mutate(dplyr::across(.cols = dplyr::everything(),
+                       .fns = unclass),
+         sex = if_else(sex == 1 , "Male", "Female"),
+         occ = if_else(occ == 6050, "Worker", "Manager"),
+         age_cat = case_when(age < 40 ~ "1. <40",
+                             age >=40 & age <=55 ~ "2. 40-55",
+                             age > 55 & age <=64 ~ "3. 56-64",
+                             age > 64 ~ "4. 65+",
+                             is.na(age) ~ "5. Unknown",
+                             TRUE ~ "ISSUE"),
+         hispan = case_when(hispan == 0 ~ "Not Hispanic",
+                            hispan == 1 ~ "Mexican",
+                            hispan == 2 ~ "Puerto Rican",
+                            hispan == 3 ~ "Cuban",
+                            hispan == 4 ~ "Other",
+                            hispan == 9 ~ "Not reported",
+                            TRUE ~ "ISSUE"),
+         race = case_when(hispan %in% c(1,2,3,4) ~ "Hispanic",
+                          race == 1 ~ "White",
+                          race == 2 ~ "Black",
+                          race == 3 ~ "American Indian / Native American",
+                          race %in% c(4,5,6) ~ "Asian / Pacific Islander",
+                          TRUE ~ "Other"),
+         white_non_white = if_else(race == "White", "White", "Non-White"))
+```
+
 
 ## Census Data
 
@@ -66,6 +105,8 @@ ipums_vars <- tribble(~`IPUMS code`, ~Description,
         "COUNTYFIP", "County (FIPS code)",
         "UHRSWORK", "number of hours per week that the respondent usually worked in the previous 12 months",
         "WKSWORK1", "number of weeks that the respondent worked for profit, pay, or as an unpaid family worker during the previous year",
+        "EMPSTAT", "indicates whether the respondent was a part of the labor force -- working or seeking work -- and, if so, whether the person was currently unemployed",
+        "LABFORCE", "a dichotomous variable indicating whether a person participated in the labor force",
         "PUMA", "The Public Use Microdata Area (PUMA))")
 
 ipums_vars %>% 
@@ -99,7 +140,7 @@ path_to_data_files <- download_extract(downloadable_extract,
 #| eval: false
 # this full dataset is huge, ~6gb because it includes all data across the country
 # for all variables. Filter this in next step and save off only what's needed.
-df_ipums <- read_ipums_micro(here::here("data/usa_00025.xml")) %>% 
+df_ipums <- read_ipums_micro(here::here("data/usa_00026.xml")) %>% 
   janitor::clean_names()
 ```
 
@@ -111,28 +152,6 @@ df_ipums %>%
            occ %in% c(6050, 0205)) %>% 
   write_rds(.,
             file = here::here("data/demographics.rds"))
-```
-
-```{r}
-df_ipums = read_rds(here::here("data/demographics.rds")) %>% 
-  # remove ipums labels which interact oddly with dt_table
-  mutate(dplyr::across(.cols = dplyr::everything(),
-                       .fns = unclass),
-         sex = if_else(sex == 1 , "Male", "Female"),
-         occ = if_else(occ == 6050, "Worker", "Manager"),
-         age_cat = case_when(age < 40 ~ "1. <40",
-                             age >=40 & age <=55 ~ "2. 40-55",
-                             age > 55 & age <=64 ~ "3. 56-64",
-                             age > 64 ~ "4. 65+",
-                             is.na(age) ~ "5. Unknown",
-                             TRUE ~ "ISSUE"),
-         hispan = case_when(hispan == 0 ~ "Not Hispanic",
-                            hispan == 1 ~ "Mexican",
-                            hispan == 2 ~ "Puerto Rican",
-                            hispan == 3 ~ "Cuban",
-                            hispan == 4 ~ "Other",
-                            hispan == 9 ~ "Not reported",
-                            TRUE ~ "ISSUE"))
 ```
 
 
@@ -355,14 +374,6 @@ df_ipums %>%
 
 
 ## Number of Deaths
-
-```{r}
-df_cohort1 = read_rds(here::here("data/df_cohort1.rds")) %>% 
-  mutate(month_of_death = as.integer(month.of.death),
-         worker_manager = if_else(census_occ_code == "6050",
-                                  "Worker",
-                                  "Manager"))
-```
 
 After looking into a number of occupation codes, this section will limit the cohort to only 2 occupation codes: 
 ```{r}
@@ -2130,3 +2141,629 @@ df_rate_occ_age_cont_year %>%
   geom_line(aes(colour = worker_manager)) +
   facet_wrap(~year)
 ```
+
+
+# Follow Ups After Devan and Matt
+
+Next steps:
+
+1. Restricting to 25 - 64 (both death and ipums) and currently employed in (in ipums) -- ages where it's plausible that people could belong to both groups.
+
+2. Does NIOCCS map to soc directly or always to census first?
+
+3. Why do age adjusted rates within manager non-whites go down over time?
+
+4. Redo indirect standardized rates with 10 year buckets instead of broad age categories
+
+5. Use 2000 seer population to standardize. See the following links:
+
+https://seer.cancer.gov/stdpopulations/single_age.html
+https://seer.cancer.gov/stdpopulations/2000stdpop-use.html
+
+6. Can we find out how many non-white farm owners in california there are?
+Can we use Census of Ag?
+
+7. Undocumented proxy variable and separately SSN missing within both groups.
+
+8. Looking at ag workers and having different comparisons groups. -- farmworkers vs. ALL other occ codes
+
+9. Do farming fishing forestry group together
+
+### Create New Cohorts
+```{r}
+df_cohort1_restricted = df_cohort1 %>% 
+  filter(recode_age_int >= 25 &
+         recode_age_int <= 64)
+  
+df_ipums_restricted = df_ipums %>% 
+  filter(age >= 25 &
+         age <= 64)
+
+# employment status limit LABFORCE == 2
+df_ipums_restricted_emp = df_ipums %>% 
+  filter(age >= 25 &
+         age <= 64 &
+         labforce == 2)
+```
+
+
+
+
+## 1. Age and Recent Employment Restrictions
+
+What is the age range of the death cohort?
+```{r}
+#| output: true
+df_cohort1 %>% 
+  summarize(min_age = min(recode_age_int, na.rm = T),
+            max_age = max(recode_age_int, na.rm = T))
+```
+
+What is the age range of the IPUMS cohort?
+```{r}
+#| output: true
+df_ipums %>% 
+  summarize(min_age = min(age, na.rm = T),
+            max_age = max(age, na.rm = T))
+```
+
+### Check IPUMS Employment Status Vars 
+
+#### EMPSTAT
+
+1 = Employed
+2 = Unemployed
+3 = Not in Labor Force
+```{r}
+#| output: true
+df_ipums %>% 
+  group_by(occ, empstat) %>% 
+  summarize(n_people = sum(perwt),
+            .groups = "drop") %>% 
+  dt_table() %>% 
+  add_commas("n_people")
+```
+
+### LABFORCE
+
+1 = No, not in the labor force
+2 = Yes, in the labor force
+```{r}
+#| output: true
+df_ipums %>% 
+  group_by(occ, labforce) %>% 
+  summarize(n_people = sum(perwt),
+            .groups = "drop") %>% 
+  dt_table() %>% 
+  add_commas("n_people")
+```
+
+### Weeks Worked Last Year
+
+#### Managers
+```{r}
+#| output: true
+df_ipums_restricted_emp %>% 
+  filter(occ == "Manager") %>% 
+  group_by(wkswork1) %>% 
+  summarize(n = sum(perwt)) %>% 
+  mutate(percent = round(n / sum(n) * 100, 2)) %>% 
+  dt_table() %>% 
+  add_commas("n")
+```
+
+#### Workers
+```{r}
+#| output: true
+df_ipums_restricted_emp %>% 
+  filter(occ == "Worker") %>% 
+  group_by(wkswork1) %>% 
+  summarize(n = sum(perwt)) %>% 
+  mutate(percent = round(n / sum(n) * 100, 2)) %>% 
+  dt_table() %>% 
+  add_commas("n")
+```
+
+
+## Age Distributions
+
+### Death Data
+```{r}
+#| output: true
+df_cohort1_restricted %>% 
+  group_by(year.of.death, recode_age_int) %>% 
+  summarize(n_people = n_distinct(id),
+            .groups = "drop") %>% 
+  ggplot(aes(x = recode_age_int,
+             y = n_people)) +
+  geom_line(stat = "identity") +
+  facet_wrap(~year.of.death) +
+  xlab("Age at Death")
+```
+
+#### Workers
+```{r}
+#| output: true
+df_cohort1_restricted %>% 
+  filter(worker_manager == "Worker") %>% 
+  group_by(year.of.death, recode_age_int) %>% 
+  summarize(n_people = n_distinct(id),
+            .groups = "drop") %>% 
+  ggplot(aes(x = recode_age_int,
+             y = n_people)) +
+  geom_line(stat = "identity") +
+  facet_wrap(~year.of.death) +
+  xlab("Age at Death")
+```
+
+#### Managers
+```{r}
+#| output: true
+df_cohort1_restricted %>% 
+  filter(worker_manager == "Manager") %>% 
+  group_by(year.of.death, recode_age_int) %>% 
+  summarize(n_people = n_distinct(id),
+            .groups = "drop") %>% 
+  ggplot(aes(x = recode_age_int,
+             y = n_people)) +
+  geom_line(stat = "identity") +
+  facet_wrap(~year.of.death) +
+  xlab("Age at Death")
+```
+
+
+
+### IPUMS Data
+
+Restricted by Age and Labor Force
+```{r}
+#| output: true
+df_ipums_restricted_emp %>% 
+  group_by(year, age) %>% 
+  summarize(n_people = sum(perwt),
+            .groups = "drop") %>% 
+  ggplot(aes(x = age,
+             y = n_people)) +
+  geom_line(stat = "identity") +
+  facet_wrap(~year) +
+  xlab("Age")
+```
+
+#### Workers
+```{r}
+#| output: true
+df_ipums_restricted_emp %>% 
+  filter(occ == "Worker") %>% 
+  group_by(year, age) %>% 
+  summarize(n_people = sum(perwt),
+            .groups = "drop") %>% 
+  ggplot(aes(x = age,
+             y = n_people)) +
+  geom_line(stat = "identity") +
+  facet_wrap(~year) +
+  xlab("Age")
+```
+
+#### Managers
+```{r}
+#| output: true
+df_ipums_restricted_emp %>% 
+  filter(occ == "Manager") %>% 
+  group_by(year, age) %>% 
+  summarize(n_people = sum(perwt),
+            .groups = "drop") %>% 
+  ggplot(aes(x = age,
+             y = n_people)) +
+  geom_line(stat = "identity") +
+  facet_wrap(~year) +
+  xlab("Age")
+```
+
+#### White Managers
+```{r}
+#| output: true
+df_ipums_restricted_emp %>% 
+  filter(occ == "Manager" &
+         race == "White") %>% 
+  group_by(year, age) %>% 
+  summarize(n_people = sum(perwt),
+            .groups = "drop") %>% 
+  ggplot(aes(x = age,
+             y = n_people)) +
+  geom_line(stat = "identity") +
+  facet_wrap(~year) +
+  xlab("Age")
+```
+#### Non-White Managers
+```{r}
+#| output: true
+df_ipums_restricted_emp %>% 
+  filter(occ == "Manager" &
+         race != "White") %>% 
+  group_by(year, age) %>% 
+  summarize(n_people = sum(perwt),
+            .groups = "drop") %>% 
+  ggplot(aes(x = age,
+             y = n_people)) +
+  geom_line(stat = "identity") +
+  facet_wrap(~year) +
+  xlab("Age")
+```
+
+
+
+
+
+
+## Indirect Standardization
+
+### Age -- Workers (Reference) Vs. Managers 
+```{r}
+df_death_indirect_age_restricted = df_cohort1_restricted %>%
+  mutate(age_cat_every_5 = case_when(
+                             recode_age_int < 30 ~ "1. 25 - 29",
+                             recode_age_int <= 34 ~ "2. 30 - 34",
+                             recode_age_int <= 39 ~ "3. 35 - 39",
+                             recode_age_int <= 44 ~ "4. 40 - 44",
+                             recode_age_int <= 49 ~ "5. 45 - 49",
+                             recode_age_int <= 54 ~ "6. 50 - 54",
+                             recode_age_int <= 59 ~ "7. 55 - 59",
+                             recode_age_int <= 64 ~ "8. 60 - 64",
+                             is.na(recode_age_int) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+df_ipums_indirect_age_restricted = df_ipums_restricted_emp %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(year,
+           occ,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop") %>% 
+  rename(worker_manager = occ)
+  
+df_worker_rates_crude = df_death_indirect_age_restricted %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_ipums_indirect_age_restricted,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  mutate(death_rate_crude_worker = sum_deaths / sum_people)
+  
+df_manager_rates = df_ipums_restricted_emp %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  filter(occ == "Manager") %>% 
+  rename(worker_manager = occ) %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(num_people = sum(perwt),
+            .groups = "drop") %>% 
+  left_join(df_worker_rates_crude %>% 
+              select(year, 
+                     age_cat_every_5, 
+                     death_rate_crude_worker),
+            by = c("year", "age_cat_every_5")) %>% 
+  mutate(expected_deaths = round(num_people * death_rate_crude_worker, 2)) %>% 
+  left_join(df_death_indirect_age_restricted %>% 
+              filter(worker_manager == "Manager"),
+            by = c("year", "worker_manager", "age_cat_every_5"))
+  
+std_mort_ratio_manager_age = df_manager_rates %>% 
+  group_by(year) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(std_mortality_ratio = round(total_observed / total_expected, 2))
+```
+
+
+```{r}
+#| output: true
+std_mort_ratio_manager_age %>% 
+  dt_table()
+```
+
+### Age -- Non-White Workers (Reference) vs. Non-White Managers
+```{r}
+df_death_indirect_age_restricted_non_white = df_cohort1_restricted %>%
+  filter(white_non_white == "Non-White") %>% 
+  mutate(age_cat_every_5 = case_when(
+                             recode_age_int < 30 ~ "1. 25 - 29",
+                             recode_age_int <= 34 ~ "2. 30 - 34",
+                             recode_age_int <= 39 ~ "3. 35 - 39",
+                             recode_age_int <= 44 ~ "4. 40 - 44",
+                             recode_age_int <= 49 ~ "5. 45 - 49",
+                             recode_age_int <= 54 ~ "6. 50 - 54",
+                             recode_age_int <= 59 ~ "7. 55 - 59",
+                             recode_age_int <= 64 ~ "8. 60 - 64",
+                             is.na(recode_age_int) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+df_ipums_indirect_age_restricted_non_white = df_ipums_restricted_emp %>% 
+  filter(white_non_white == "Non-White") %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(year,
+           occ,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop") %>% 
+  rename(worker_manager = occ)
+  
+df_worker_rates_crude_non_white = df_death_indirect_age_restricted_non_white %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_ipums_indirect_age_restricted_non_white,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  mutate(death_rate_crude_worker = sum_deaths / sum_people)
+  
+df_manager_rates_non_white = df_ipums_restricted_emp %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  filter(occ == "Manager") %>% 
+  rename(worker_manager = occ) %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(num_people = sum(perwt),
+            .groups = "drop") %>% 
+  left_join(df_worker_rates_crude_non_white %>% 
+              select(year, 
+                     age_cat_every_5, 
+                     death_rate_crude_worker),
+            by = c("year", "age_cat_every_5")) %>% 
+  mutate(expected_deaths = round(num_people * death_rate_crude_worker, 2)) %>% 
+  left_join(df_death_indirect_age_restricted_non_white %>% 
+              filter(worker_manager == "Manager"),
+            by = c("year", "worker_manager", "age_cat_every_5"))
+  
+std_mort_ratio_manager_age_non_white = df_manager_rates_non_white %>% 
+  group_by(year) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(std_mortality_ratio = round(total_observed / total_expected, 2))
+```
+
+```{r}
+#| output: true
+std_mort_ratio_manager_age_non_white %>% 
+  dt_table()
+```
+
+
+
+### Age -- White Workers (Reference) vs. White Managers
+```{r}
+df_death_indirect_age_restricted_white = df_cohort1_restricted %>%
+  filter(white_non_white == "White") %>% 
+  mutate(age_cat_every_5 = case_when(
+                             recode_age_int < 30 ~ "1. 25 - 29",
+                             recode_age_int <= 34 ~ "2. 30 - 34",
+                             recode_age_int <= 39 ~ "3. 35 - 39",
+                             recode_age_int <= 44 ~ "4. 40 - 44",
+                             recode_age_int <= 49 ~ "5. 45 - 49",
+                             recode_age_int <= 54 ~ "6. 50 - 54",
+                             recode_age_int <= 59 ~ "7. 55 - 59",
+                             recode_age_int <= 64 ~ "8. 60 - 64",
+                             is.na(recode_age_int) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+df_ipums_indirect_age_restricted_white = df_ipums_restricted_emp %>% 
+  filter(white_non_white == "White") %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(year,
+           occ,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop") %>% 
+  rename(worker_manager = occ)
+  
+df_worker_rates_crude_white = df_death_indirect_age_restricted_white %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_ipums_indirect_age_restricted_white,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  mutate(death_rate_crude_worker = sum_deaths / sum_people)
+  
+df_manager_rates_white = df_ipums_restricted_emp %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  filter(occ == "Manager") %>% 
+  rename(worker_manager = occ) %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(num_people = sum(perwt),
+            .groups = "drop") %>% 
+  left_join(df_worker_rates_crude_white %>% 
+              select(year, 
+                     age_cat_every_5, 
+                     death_rate_crude_worker),
+            by = c("year", "age_cat_every_5")) %>% 
+  mutate(expected_deaths = round(num_people * death_rate_crude_worker, 2)) %>% 
+  left_join(df_death_indirect_age_restricted_white %>% 
+              filter(worker_manager == "Manager"),
+            by = c("year", "worker_manager", "age_cat_every_5"))
+  
+std_mort_ratio_manager_age_white = df_manager_rates_white %>% 
+  group_by(year) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(std_mortality_ratio = round(total_observed / total_expected, 2))
+```
+
+```{r}
+#| output: true
+std_mort_ratio_manager_age_white %>% 
+  dt_table()
+```
+
+
+### Age -- Non-White Workers (Reference) vs. White Managers
+```{r}
+df_death_indirect_age_restricted_non_white = df_cohort1_restricted %>%
+  filter(white_non_white == "Non-White") %>% 
+  mutate(age_cat_every_5 = case_when(
+                             recode_age_int < 30 ~ "1. 25 - 29",
+                             recode_age_int <= 34 ~ "2. 30 - 34",
+                             recode_age_int <= 39 ~ "3. 35 - 39",
+                             recode_age_int <= 44 ~ "4. 40 - 44",
+                             recode_age_int <= 49 ~ "5. 45 - 49",
+                             recode_age_int <= 54 ~ "6. 50 - 54",
+                             recode_age_int <= 59 ~ "7. 55 - 59",
+                             recode_age_int <= 64 ~ "8. 60 - 64",
+                             is.na(recode_age_int) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+df_ipums_indirect_age_restricted_mixed = df_ipums_restricted_emp %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(year,
+           occ,
+           white_non_white,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop") %>% 
+  rename(worker_manager = occ)
+  
+df_worker_rates_crude_non_white = df_death_indirect_age_restricted_non_white %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_ipums_indirect_age_restricted_mixed,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  mutate(death_rate_crude_worker = sum_deaths / sum_people)
+  
+df_manager_rates_white_vs_nonwhite = df_ipums_restricted_emp %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  filter(occ == "Manager") %>% 
+  rename(worker_manager = occ) %>% 
+  group_by(year,
+           worker_manager,
+           white_non_white,
+           age_cat_every_5) %>% 
+  summarize(num_people = sum(perwt),
+            .groups = "drop") %>% 
+  left_join(df_worker_rates_crude_non_white %>% 
+              select(year, 
+                     white_non_white,
+                     age_cat_every_5, 
+                     death_rate_crude_worker),
+            by = c("year", "age_cat_every_5", "white_non_white")) %>% 
+  mutate(expected_deaths = round(num_people * death_rate_crude_worker, 2)) %>% 
+  left_join(df_death_indirect_age_restricted_non_white,
+            by = c("year", "worker_manager", "age_cat_every_5"))
+  
+std_mort_ratio_manager_age_mixed = df_manager_rates_white_vs_nonwhite %>% 
+  group_by(year) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(std_mortality_ratio = round(total_observed / total_expected, 2))
+```
+
+```{r}
+#| output: true
+std_mort_ratio_manager_age_mixed %>% 
+  dt_table()
+```
+
+
+
+
