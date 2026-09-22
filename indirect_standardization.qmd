@@ -1,0 +1,839 @@
+---
+title: "Class and Death: Indirect Standardization Notebook"
+author: "Luke Slipski"
+date: "Published on `r format(Sys.time(), '%m-%d-%y')`"
+format:
+  html:
+    toc: true
+    toc-location: left
+    toc-depth: 5
+    page-layout: full
+fig-cap-location: top
+editor:
+  markdown:
+    wrap: 72
+execute: 
+  echo: false
+  output: false
+---
+
+Following the procedure here for indirect standardization: https://pmc.ncbi.nlm.nih.gov/articles/PMC3406211/
+
+```{r}
+library("tidyverse")
+library("ipumsr")
+library("lubridate")
+library("scales")
+# download CAdeathserver with remotes::install_git("https://github.com/Lslipski/CAdeathserver")
+library("CAdeathserver")
+# download merced.clc package with remotes::install_git("https://github.com/Lslipski/merced.clc")
+library("merced.clc")
+# for working with ICD codes
+# install with 
+# remotes::install_local("C:\\Users\\luke_slipski\\Downloads\\icd-main.zip")
+# after downloading to local from https://github.com/cran/icd
+library("icd") 
+library("epitools")
+```
+# Load
+```{r}
+df_cohort1 = read_rds(here::here("data/df_cohort1.rds")) %>% 
+  mutate(month_of_death = as.integer(month.of.death),
+         worker_manager = if_else(census_occ_code == "6050",
+                                  "Worker",
+                                  "Manager"),
+         white_non_white = if_else(recode_race == "White", "White", "Non-White")) 
+
+df_ipums = read_rds(here::here("data/demographics.rds")) %>% 
+  # remove ipums labels which interact oddly with dt_table
+  mutate(dplyr::across(.cols = dplyr::everything(),
+                       .fns = unclass),
+         sex = if_else(sex == 1 , "Male", "Female"),
+         worker_manager = if_else(occ == 6050, "Worker", "Manager"),
+         age_cat = case_when(age < 40 ~ "1. <40",
+                             age >=40 & age <=55 ~ "2. 40-55",
+                             age > 55 & age <=64 ~ "3. 56-64",
+                             age > 64 ~ "4. 65+",
+                             is.na(age) ~ "5. Unknown",
+                             TRUE ~ "ISSUE"),
+         hispan = case_when(hispan == 0 ~ "Not Hispanic",
+                            hispan == 1 ~ "Mexican",
+                            hispan == 2 ~ "Puerto Rican",
+                            hispan == 3 ~ "Cuban",
+                            hispan == 4 ~ "Other",
+                            hispan == 9 ~ "Not reported",
+                            TRUE ~ "ISSUE"),
+         race = case_when(hispan %in% c(1,2,3,4) ~ "Hispanic",
+                          race == 1 ~ "White",
+                          race == 2 ~ "Black",
+                          race == 3 ~ "American Indian / Native American",
+                          race %in% c(4,5,6) ~ "Asian / Pacific Islander",
+                          TRUE ~ "Other"),
+         white_non_white = if_else(race == "White", "White", "Non-White"))
+
+# limited cohorts restricted to age 25-64 and ipums limited to in the labor force
+df_cohort1_restricted = df_cohort1 %>% 
+  filter(recode_age_int >= 25 &
+         recode_age_int <= 64) %>% 
+  mutate(age_cat_every_5 = case_when(
+                             recode_age_int < 30 ~ "1. 25 - 29",
+                             recode_age_int <= 34 ~ "2. 30 - 34",
+                             recode_age_int <= 39 ~ "3. 35 - 39",
+                             recode_age_int <= 44 ~ "4. 40 - 44",
+                             recode_age_int <= 49 ~ "5. 45 - 49",
+                             recode_age_int <= 54 ~ "6. 50 - 54",
+                             recode_age_int <= 59 ~ "7. 55 - 59",
+                             recode_age_int <= 64 ~ "8. 60 - 64",
+                             is.na(recode_age_int) ~ "9. Unknown",
+                             TRUE ~ "ISSUE"))
+  
+df_ipums_restricted = df_ipums %>% 
+  filter(age >= 25 &
+         age <= 64) %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE"))
+
+# employment status limit LABFORCE == 2
+df_ipums_restricted_emp = df_ipums %>% 
+  filter(age >= 25 &
+         age <= 64 &
+         labforce == 2) %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE"))
+```
+
+## Indirect Standardization
+
+### Age -- Workers (Reference) Vs. Managers 
+```{r}
+# group deaths by year, worker/manager, and age category and count the number of 
+# deaths in each strata
+df_deaths_per_stratum = df_cohort1_restricted %>%
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+# group population by year, worker/manager, and age category and count the number
+# of people in each strata
+df_people_per_stratum = df_ipums_restricted_emp %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop")
+  
+# get worker death rates by year and age group by joining to the number of people
+# in worker strata and dividing deaths by people
+df_worker_death_rates_crude = df_deaths_per_stratum %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  mutate(death_rate_crude_worker = sum_deaths / sum_people)
+
+# calculate crude worker death rate overall by year for workers
+df_worker_rates_crude_year = df_deaths_per_stratum %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  group_by(year) %>% 
+  summarize(total_worker_deaths = sum(sum_deaths),
+            total_workers = sum(sum_people),
+            .groups = "drop") %>% 
+  mutate(worker_crude_death_rate = total_worker_deaths / total_workers)
+  
+# start with number of people per stratum for managers only
+# join to get the worker death rates per stratum
+# calculate expected deaths as number of managers times worker death rates per stratum
+# join to get actual number of manager deaths per stratum
+df_manager_rates = df_people_per_stratum %>% 
+  filter(worker_manager == "Manager") %>% 
+  left_join(df_worker_death_rates_crude %>% 
+              select(year, 
+                     age_cat_every_5, 
+                     death_rate_crude_worker),
+            by = c("year", "age_cat_every_5")) %>% 
+  mutate(expected_deaths = round(sum_people * death_rate_crude_worker, 2)) %>% 
+  left_join(df_deaths_per_stratum %>% 
+              filter(worker_manager == "Manager"),
+            by = c("year", "worker_manager", "age_cat_every_5"))
+  
+# start with the manager expected and actual death counts by stratum 
+# group into years and sum the expected and actual death counts by year
+# divide actual by expected to get the adjusted mortality rate by year
+# join back to worker crude rates by year 
+df_manager_rates_adj_year = df_manager_rates %>% 
+  group_by(year) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(manager_std_mortality_ratio = round(total_observed / total_expected, 2)) %>% 
+  left_join(df_worker_rates_crude_year,
+           by = "year") %>% 
+  mutate(manager_adj_mortality_rate = manager_std_mortality_ratio * worker_crude_death_rate)
+```
+
+
+```{r}
+#| output: true
+df_manager_rates_adj_year %>% 
+  mutate(worker_crude_death_rate = round(worker_crude_death_rate, 5)) %>% 
+  relocate(year,
+           total_worker_deaths,
+           total_workers, 
+           worker_crude_death_rate,
+           total_expected,
+           total_observed,
+           manager_std_mortality_ratio,
+           manager_adj_mortality_rate) %>% 
+  dt_table() %>% 
+  add_commas("total_workers")
+```
+
+
+### Age -- Non-White Workers (Reference) vs. Non-White Managers
+```{r}
+# group deaths by year, worker/manager, and age category
+# filter to non-white people only 
+# count the number of deaths in each strata
+df_deaths_per_stratum = df_cohort1_restricted %>%
+  filter(white_non_white == "Non-White") %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+# group population by year, worker/manager, and age category
+# filter to non-white people only 
+# count the number of people in each strata
+df_people_per_stratum = df_ipums_restricted_emp %>% 
+  filter(white_non_white == "Non-White") %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop")
+  
+# get worker death rates by year and age group by joining to the number of people
+# in worker strata and dividing deaths by people
+df_worker_death_rates_crude = df_deaths_per_stratum %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  mutate(death_rate_crude_worker = sum_deaths / sum_people)
+
+# calculate crude worker death rate overall by year for workers
+df_worker_rates_crude_year = df_deaths_per_stratum %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  group_by(year) %>% 
+  summarize(total_worker_deaths = sum(sum_deaths),
+            total_workers = sum(sum_people),
+            .groups = "drop") %>% 
+  mutate(worker_crude_death_rate = total_worker_deaths / total_workers)
+  
+# start with number of people per stratum for managers only
+# join to get the worker death rates per stratum
+# calculate expected deaths as number of managers times worker death rates per stratum
+# join to get actual number of manager deaths per stratum
+df_manager_rates = df_people_per_stratum %>% 
+  filter(worker_manager == "Manager") %>% 
+  left_join(df_worker_death_rates_crude %>% 
+              select(year, 
+                     age_cat_every_5, 
+                     death_rate_crude_worker),
+            by = c("year", "age_cat_every_5")) %>% 
+  mutate(expected_deaths = round(sum_people * death_rate_crude_worker, 2)) %>% 
+  left_join(df_deaths_per_stratum %>% 
+              filter(worker_manager == "Manager"),
+            by = c("year", "worker_manager", "age_cat_every_5"))
+  
+# start with the manager expected and actual death counts by stratum 
+# group into years and sum the expected and actual death counts by year
+# divide actual by expected to get the adjusted mortality rate by year
+# join back to worker crude rates by year 
+df_manager_rates_adj_year = df_manager_rates %>% 
+  group_by(year) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(manager_std_mortality_ratio = round(total_observed / total_expected, 2)) %>% 
+  left_join(df_worker_rates_crude_year,
+           by = "year") %>% 
+  mutate(manager_adj_mortality_rate = manager_std_mortality_ratio * worker_crude_death_rate)
+```
+
+```{r}
+#| output: true
+df_manager_rates_adj_year %>% 
+  mutate(worker_crude_death_rate = round(worker_crude_death_rate, 5),
+         total_expected = round(total_expected,2)) %>% 
+  relocate(year,
+           total_worker_deaths,
+           total_workers, 
+           worker_crude_death_rate,
+           total_expected,
+           total_observed,
+           manager_std_mortality_ratio,
+           manager_adj_mortality_rate) %>% 
+  dt_table() %>% 
+  add_commas("total_workers")
+```
+
+### Age -- White Workers (Reference) vs. White Managers
+```{r}
+# group deaths by year, worker/manager, and age category
+# filter to non-white people only 
+# count the number of deaths in each strata
+df_deaths_per_stratum = df_cohort1_restricted %>%
+  filter(white_non_white == "White") %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+# group population by year, worker/manager, and age category
+# filter to non-white people only 
+# count the number of people in each strata
+df_people_per_stratum = df_ipums_restricted_emp %>% 
+  filter(white_non_white == "White") %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop")
+  
+# get worker death rates by year and age group by joining to the number of people
+# in worker strata and dividing deaths by people
+df_worker_death_rates_crude = df_deaths_per_stratum %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  mutate(death_rate_crude_worker = sum_deaths / sum_people)
+
+# calculate crude worker death rate overall by year for workers
+df_worker_rates_crude_year = df_deaths_per_stratum %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  group_by(year) %>% 
+  summarize(total_worker_deaths = sum(sum_deaths),
+            total_workers = sum(sum_people),
+            .groups = "drop") %>% 
+  mutate(worker_crude_death_rate = total_worker_deaths / total_workers)
+  
+# start with number of people per stratum for managers only
+# join to get the worker death rates per stratum
+# calculate expected deaths as number of managers times worker death rates per stratum
+# join to get actual number of manager deaths per stratum
+df_manager_rates = df_people_per_stratum %>% 
+  filter(worker_manager == "Manager") %>% 
+  left_join(df_worker_death_rates_crude %>% 
+              select(year, 
+                     age_cat_every_5, 
+                     death_rate_crude_worker),
+            by = c("year", "age_cat_every_5")) %>% 
+  mutate(expected_deaths = round(sum_people * death_rate_crude_worker, 2)) %>% 
+  left_join(df_deaths_per_stratum %>% 
+              filter(worker_manager == "Manager"),
+            by = c("year", "worker_manager", "age_cat_every_5"))
+  
+# start with the manager expected and actual death counts by stratum 
+# group into years and sum the expected and actual death counts by year
+# divide actual by expected to get the adjusted mortality rate by year
+# join back to worker crude rates by year 
+df_manager_rates_adj_year = df_manager_rates %>% 
+  group_by(year) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(manager_std_mortality_ratio = round(total_observed / total_expected, 2)) %>% 
+  left_join(df_worker_rates_crude_year,
+           by = "year") %>% 
+  mutate(manager_adj_mortality_rate = manager_std_mortality_ratio * worker_crude_death_rate)
+```
+
+
+```{r}
+#| output: true
+df_manager_rates_adj_year %>% 
+  mutate(worker_crude_death_rate = round(worker_crude_death_rate, 5),
+         total_expected = round(total_expected,2)) %>% 
+  relocate(year,
+           total_worker_deaths,
+           total_workers, 
+           worker_crude_death_rate,
+           total_expected,
+           total_observed,
+           manager_std_mortality_ratio,
+           manager_adj_mortality_rate) %>% 
+  dt_table() %>% 
+  add_commas("total_workers")
+```
+
+
+
+### Age -- Non-White Workers (Reference) vs. White Managers
+```{r}
+# group deaths by year, worker/manager, and age category
+# filter to non-white people only 
+# count the number of deaths in each strata
+df_deaths_per_stratum_NW = df_cohort1_restricted %>%
+  filter(white_non_white == "Non-White") %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+# group population by year, worker/manager, and age category
+# filter to non-white people only 
+# count the number of people in each strata
+df_people_per_stratum_NW = df_ipums_restricted_emp %>% 
+  filter(white_non_white == "Non-White") %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop")
+
+# group deaths by year, worker/manager, and age category
+# filter to white people only 
+# count the number of deaths in each strata
+df_deaths_per_stratum_W = df_cohort1_restricted %>%
+  filter(white_non_white == "White") %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+# group population by year, worker/manager, and age category
+# filter to white people only 
+# count the number of people in each strata
+df_people_per_stratum_W = df_ipums_restricted_emp %>% 
+  filter(white_non_white == "White") %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop")
+  
+# get Non-White worker death rates by year and age group by joining to the number of people
+# in worker strata and dividing deaths by people
+df_worker_death_rates_crude = df_deaths_per_stratum_NW %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum_NW,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  mutate(death_rate_crude_worker = sum_deaths / sum_people)
+
+# calculate crude Non-White worker death rate overall by year for workers
+df_worker_rates_crude_year = df_deaths_per_stratum_NW %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum_NW,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  group_by(year) %>% 
+  summarize(total_worker_deaths = sum(sum_deaths),
+            total_workers = sum(sum_people),
+            .groups = "drop") %>% 
+  mutate(worker_crude_death_rate = total_worker_deaths / total_workers)
+  
+# start with number of White people per stratum for managers only
+# join to get the Non-White worker death rates per stratum
+# calculate expected deaths as number of managers times worker death rates per stratum
+# join to get actual number of White manager deaths per stratum
+df_manager_rates = df_people_per_stratum_W %>% 
+  filter(worker_manager == "Manager") %>% 
+  left_join(df_worker_death_rates_crude %>% 
+              select(year, 
+                     age_cat_every_5, 
+                     death_rate_crude_worker),
+            by = c("year", "age_cat_every_5")) %>% 
+  mutate(expected_deaths = round(sum_people * death_rate_crude_worker, 2)) %>% 
+  left_join(df_deaths_per_stratum_W %>% 
+              filter(worker_manager == "Manager"),
+            by = c("year", "worker_manager", "age_cat_every_5"))
+  
+# start with the manager expected and actual death counts by stratum 
+# group into years and sum the expected and actual death counts by year
+# divide actual by expected to get the adjusted mortality rate by year
+# join back to worker crude rates by year 
+df_manager_rates_adj_year = df_manager_rates %>% 
+  group_by(year) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(manager_std_mortality_ratio = round(total_observed / total_expected, 2)) %>% 
+  left_join(df_worker_rates_crude_year,
+           by = "year") %>% 
+  mutate(manager_adj_mortality_rate = manager_std_mortality_ratio * worker_crude_death_rate)
+```
+
+```{r}
+#| output: true
+df_manager_rates_adj_year %>% 
+  mutate(worker_crude_death_rate = round(worker_crude_death_rate, 5),
+         total_expected = round(total_expected,2)) %>% 
+  relocate(year,
+           total_worker_deaths,
+           total_workers, 
+           worker_crude_death_rate,
+           total_expected,
+           total_observed,
+           manager_std_mortality_ratio,
+           manager_adj_mortality_rate) %>% 
+  dt_table() %>% 
+  add_commas("total_workers")
+```
+
+
+### Age -- White Workers (Reference) vs. Non-White Managers
+```{r}
+# group deaths by year, worker/manager, and age category
+# filter to non-white people only 
+# count the number of deaths in each strata
+df_deaths_per_stratum_NW = df_cohort1_restricted %>%
+  filter(white_non_white == "Non-White") %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+# group population by year, worker/manager, and age category
+# filter to non-white people only 
+# count the number of people in each strata
+df_people_per_stratum_NW = df_ipums_restricted_emp %>% 
+  filter(white_non_white == "Non-White") %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop")
+
+# group deaths by year, worker/manager, and age category
+# filter to white people only 
+# count the number of deaths in each strata
+df_deaths_per_stratum_W = df_cohort1_restricted %>%
+  filter(white_non_white == "White") %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+# group population by year, worker/manager, and age category
+# filter to white people only 
+# count the number of people in each strata
+df_people_per_stratum_W = df_ipums_restricted_emp %>% 
+  filter(white_non_white == "White") %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop")
+  
+# get White worker death rates by year and age group by joining to the number of people
+# in worker strata and dividing deaths by people
+df_worker_death_rates_crude = df_deaths_per_stratum_W %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum_W,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  mutate(death_rate_crude_worker = sum_deaths / sum_people)
+
+# calculate crude White worker death rate overall by year for workers
+df_worker_rates_crude_year = df_deaths_per_stratum_W %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum_W,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  group_by(year) %>% 
+  summarize(total_worker_deaths = sum(sum_deaths),
+            total_workers = sum(sum_people),
+            .groups = "drop") %>% 
+  mutate(worker_crude_death_rate = total_worker_deaths / total_workers)
+  
+# start with number of White people per stratum for managers only
+# join to get the Non-White worker death rates per stratum
+# calculate expected deaths as number of managers times worker death rates per stratum
+# join to get actual number of White manager deaths per stratum
+df_manager_rates = df_people_per_stratum_NW %>% 
+  filter(worker_manager == "Manager") %>% 
+  left_join(df_worker_death_rates_crude %>% 
+              select(year, 
+                     age_cat_every_5, 
+                     death_rate_crude_worker),
+            by = c("year", "age_cat_every_5")) %>% 
+  mutate(expected_deaths = round(sum_people * death_rate_crude_worker, 2)) %>% 
+  left_join(df_deaths_per_stratum_NW %>% 
+              filter(worker_manager == "Manager"),
+            by = c("year", "worker_manager", "age_cat_every_5"))
+  
+# start with the manager expected and actual death counts by stratum 
+# group into years and sum the expected and actual death counts by year
+# divide actual by expected to get the adjusted mortality rate by year
+# join back to worker crude rates by year 
+df_manager_rates_adj_year = df_manager_rates %>% 
+  group_by(year) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(manager_std_mortality_ratio = round(total_observed / total_expected, 2)) %>% 
+  left_join(df_worker_rates_crude_year,
+           by = "year") %>% 
+  mutate(manager_adj_mortality_rate = manager_std_mortality_ratio * worker_crude_death_rate)
+```
+
+```{r}
+#| output: true
+df_manager_rates_adj_year %>% 
+  mutate(worker_crude_death_rate = round(worker_crude_death_rate, 5),
+         total_expected = round(total_expected,2)) %>% 
+  relocate(year,
+           total_worker_deaths,
+           total_workers, 
+           worker_crude_death_rate,
+           total_expected,
+           total_observed,
+           manager_std_mortality_ratio,
+           manager_adj_mortality_rate) %>% 
+  dt_table() %>% 
+  add_commas("total_workers")
+```
+
+### Age, Male Only-- Workers (Reference) Vs. Managers 
+```{r}
+# group deaths by year, worker/manager, and age category and count the number of 
+# deaths in each strata
+df_deaths_per_stratum = df_cohort1_restricted %>%
+  filter(recode_sex == 'male') %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+# group population by year, worker/manager, and age category and count the number
+# of people in each strata
+df_people_per_stratum = df_ipums_restricted_emp %>% 
+  filter(sex == "Male") %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop")
+  
+# get worker death rates by year and age group by joining to the number of people
+# in worker strata and dividing deaths by people
+df_worker_death_rates_crude = df_deaths_per_stratum %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  mutate(death_rate_crude_worker = sum_deaths / sum_people)
+
+# calculate crude worker death rate overall by year for workers
+df_worker_rates_crude_year = df_deaths_per_stratum %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  group_by(year) %>% 
+  summarize(total_worker_deaths = sum(sum_deaths),
+            total_workers = sum(sum_people),
+            .groups = "drop") %>% 
+  mutate(worker_crude_death_rate = total_worker_deaths / total_workers)
+  
+# start with number of people per stratum for managers only
+# join to get the worker death rates per stratum
+# calculate expected deaths as number of managers times worker death rates per stratum
+# join to get actual number of manager deaths per stratum
+df_manager_rates = df_people_per_stratum %>% 
+  filter(worker_manager == "Manager") %>% 
+  left_join(df_worker_death_rates_crude %>% 
+              select(year, 
+                     age_cat_every_5, 
+                     death_rate_crude_worker),
+            by = c("year", "age_cat_every_5")) %>% 
+  mutate(expected_deaths = round(sum_people * death_rate_crude_worker, 2)) %>% 
+  left_join(df_deaths_per_stratum %>% 
+              filter(worker_manager == "Manager"),
+            by = c("year", "worker_manager", "age_cat_every_5"))
+  
+# start with the manager expected and actual death counts by stratum 
+# group into years and sum the expected and actual death counts by year
+# divide actual by expected to get the adjusted mortality rate by year
+# join back to worker crude rates by year 
+df_manager_rates_adj_year = df_manager_rates %>% 
+  group_by(year) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(manager_std_mortality_ratio = round(total_observed / total_expected, 2)) %>% 
+  left_join(df_worker_rates_crude_year,
+           by = "year") %>% 
+  mutate(manager_adj_mortality_rate = manager_std_mortality_ratio * worker_crude_death_rate)
+```
+
+
+```{r}
+#| output: true
+df_manager_rates_adj_year %>% 
+  mutate(worker_crude_death_rate = round(worker_crude_death_rate, 5)) %>% 
+  relocate(year,
+           total_worker_deaths,
+           total_workers, 
+           worker_crude_death_rate,
+           total_expected,
+           total_observed,
+           manager_std_mortality_ratio,
+           manager_adj_mortality_rate) %>% 
+  dt_table() %>% 
+  add_commas("total_workers")
+```
+
+
+### Age -- Non-White Workers (Reference) vs. White Workers
+```{r}
+# group deaths by year, worker/manager, and age category
+# filter to non-white people only 
+# count the number of deaths in each strata
+df_deaths_per_stratum_NW = df_cohort1_restricted %>%
+  filter(white_non_white == "Non-White") %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+# group population by year, worker/manager, and age category
+# filter to non-white people only 
+# count the number of people in each strata
+df_people_per_stratum_NW = df_ipums_restricted_emp %>% 
+  filter(white_non_white == "Non-White") %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop")
+
+# group deaths by year, worker/manager, and age category
+# filter to white people only 
+# count the number of deaths in each strata
+df_deaths_per_stratum_W = df_cohort1_restricted %>%
+  filter(white_non_white == "White") %>% 
+  group_by(year.of.death,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_deaths = n_distinct(id),
+            .groups = "drop") %>% 
+  rename(year = year.of.death)
+  
+# group population by year, worker/manager, and age category
+# filter to white people only 
+# count the number of people in each strata
+df_people_per_stratum_W = df_ipums_restricted_emp %>% 
+  filter(white_non_white == "White") %>% 
+  group_by(year,
+           worker_manager,
+           age_cat_every_5) %>% 
+  summarize(sum_people = sum(perwt),
+            .groups = "drop")
+  
+# get Non-White worker death rates by year and age group by joining to the number of people
+# in worker strata and dividing deaths by people
+df_worker_death_rates_crude = df_deaths_per_stratum_NW %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum_NW,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  mutate(death_rate_crude_worker = sum_deaths / sum_people)
+
+# calculate crude Non-White worker death rate overall by year for workers
+df_worker_rates_crude_year = df_deaths_per_stratum_NW %>%  
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_people_per_stratum_NW,
+            by = c("year","worker_manager", "age_cat_every_5")) %>% 
+  group_by(year) %>% 
+  summarize(total_worker_deaths = sum(sum_deaths),
+            total_workers = sum(sum_people),
+            .groups = "drop") %>% 
+  mutate(worker_crude_death_rate = total_worker_deaths / total_workers)
+  
+# start with number of White people per stratum for workers only
+# join to get the Non-White worker death rates per stratum
+# calculate expected deaths as number of managers times worker death rates per stratum
+# join to get actual number of White worker deaths per stratum
+df_manager_rates = df_people_per_stratum_W %>% 
+  filter(worker_manager == "Worker") %>% 
+  left_join(df_worker_death_rates_crude %>% 
+              select(year, 
+                     age_cat_every_5, 
+                     death_rate_crude_worker),
+            by = c("year", "age_cat_every_5")) %>% 
+  mutate(expected_deaths = round(sum_people * death_rate_crude_worker, 2)) %>% 
+  left_join(df_deaths_per_stratum_W %>% 
+              filter(worker_manager == "Worker"),
+            by = c("year", "worker_manager", "age_cat_every_5"))
+  
+# start with the manager expected and actual death counts by stratum 
+# group into years and sum the expected and actual death counts by year
+# divide actual by expected to get the adjusted mortality rate by year
+# join back to worker crude rates by year 
+df_manager_rates_adj_year = df_manager_rates %>% 
+  group_by(year) %>% 
+  summarize(total_expected = sum(expected_deaths),
+            total_observed = sum(sum_deaths),
+            .groups = "drop") %>% 
+  mutate(std_mortality_ratio = round(total_observed / total_expected, 2)) %>% 
+  left_join(df_worker_rates_crude_year,
+           by = "year") %>% 
+  mutate(adj_mortality_rate = std_mortality_ratio * worker_crude_death_rate)
+```
+
+```{r}
+#| output: true
+df_manager_rates_adj_year %>% 
+  mutate(worker_crude_death_rate = round(worker_crude_death_rate, 5),
+         total_expected = round(total_expected,2)) %>% 
+  relocate(year,
+           total_worker_deaths,
+           total_workers, 
+           worker_crude_death_rate,
+           total_expected,
+           total_observed,
+           std_mortality_ratio,
+           adj_mortality_rate) %>% 
+  dt_table() %>% 
+  add_commas("total_workers")
+```
+
+
+
