@@ -8,6 +8,7 @@ format:
     toc-location: left
     toc-depth: 5
     page-layout: full
+    embed-resources: true
 fig-cap-location: top
 editor:
   markdown:
@@ -23,6 +24,7 @@ library("tidyverse")
 library("ipumsr")
 library("lubridate")
 library("scales")
+library("PHEindicatormethods")
 # download CAdeathserver with remotes::install_git("https://github.com/Lslipski/CAdeathserver")
 library("CAdeathserver")
 # download merced.clc package with remotes::install_git("https://github.com/Lslipski/merced.clc")
@@ -73,10 +75,15 @@ library("merced.clc")
 #           file = here::here("data/df_farmworkers_vs_all.rds"))
 ```
 
+This cohort includes males ages 25 - 64
+
 ```{r}
 # Load cohort
 df_cohort = read_rds(file = here::here("data/df_farmworkers_vs_all.rds")) %>% 
-  mutate(farmworker_vs_not = if_else(census_occ_code == "6050", "farmworker", "not-farmworker"))
+  mutate(farmworker_vs_not = if_else(census_occ_code == "6050", "farmworker", "not-farmworker")) %>% 
+  filter(recode_age_int >=25 &
+         recode_age_int <= 64 &
+         recode_sex == 'male')
 ```
 
 # Education
@@ -230,7 +237,7 @@ c1_age_at_death_sex %>%
   dt_table()
 ```
 
-## Categorical
+## Categorical (Large Groups)
 ```{r}
 #| output: true
 c1_age_at_death_cat = df_cohort %>% 
@@ -255,6 +262,40 @@ c1_age_at_death_cat = df_cohort %>%
 c1_age_at_death_cat %>% 
   dt_table()
 ```
+
+## Categorical (5-Year Groups)
+```{r}
+#| output: true
+c1_age_at_death_cat5 = df_cohort %>% 
+  mutate(age_cat_every_5 = case_when(
+                             recode_age_int < 30 ~ "1. 25 - 29",
+                             recode_age_int <= 34 ~ "2. 30 - 34",
+                             recode_age_int <= 39 ~ "3. 35 - 39",
+                             recode_age_int <= 44 ~ "4. 40 - 44",
+                             recode_age_int <= 49 ~ "5. 45 - 49",
+                             recode_age_int <= 54 ~ "6. 50 - 54",
+                             recode_age_int <= 59 ~ "7. 55 - 59",
+                             recode_age_int <= 64 ~ "8. 60 - 64",
+                             is.na(recode_age_int) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(farmworker_vs_not, age_cat_every_5) %>% 
+  summarize(num_in_category = n_distinct(id),
+            .groups = "drop_last") %>% 
+  mutate(`percent in category` = as.character(round(num_in_category / sum(num_in_category) * 100, 2))) %>% 
+  select(farmworker_vs_not, age_cat_every_5, `percent in category`) %>% 
+  pivot_wider(names_from = farmworker_vs_not,
+              values_from = `percent in category`) %>% 
+  mutate(measure = "Age at Death Percentage") %>% 
+  rename(level = age_cat_every_5) %>% 
+  relocate(measure, level) %>% 
+  arrange(level)
+  
+c1_age_at_death_cat5 %>% 
+  dt_table()
+```
+
+
+
 
 
 # Indirect Standardization
@@ -317,11 +358,14 @@ df_ipums = read_rds(here::here("data/df_ipums_limited.rds")) %>%
                           race == 3 ~ "American Indian / Native American",
                           race %in% c(4,5,6) ~ "Asian / Pacific Islander",
                           TRUE ~ "Other"),
-         white_non_white = if_else(race == "White", "White", "Non-White"))
+         white_non_white = if_else(race == "White", "White", "Non-White")) %>% 
+         filter(sex == 'Male')
+
 ```
 
 ```{r}
 df_death_ind_stand = df_cohort %>% 
+    filter(recode_sex == 'male') %>% 
     mutate(age_cat_every_5 = case_when(
                              recode_age_int < 30 ~ "1. 25 - 29",
                              recode_age_int <= 34 ~ "2. 30 - 34",
@@ -335,7 +379,7 @@ df_death_ind_stand = df_cohort %>%
                              TRUE ~ "ISSUE"))
 ```
 
-## Age -- Farmworkers (Reference) Vs. Not Farmworkers 
+## Farmworkers (Reference) Vs. Not Farmworkers By Year
 ```{r}
 # group deaths by year, worker/manager, and age category and count the number of 
 # deaths in each strata
@@ -433,101 +477,330 @@ df_manager_rates_adj_year %>%
 
 
 
-## Age (25-64) -- Farmworkers (Reference) Vs. Not Farmworkers 
+
+
+
+# Direct Standardization
+
+Using the 2000 census population from [SEER](https://seer.cancer.gov/stdpopulations/stdpop.singleages.html)
+
+[Direct Standardization Example in R](https://www.epirhandbook.com/en/new_pages/standardization.html)
+
 ```{r}
-# group deaths by year, worker/manager, and age category and count the number of 
-# deaths in each strata
-df_deaths_per_stratum = df_death_ind_stand %>%
-  filter(recode_age_int >= 25 &
-               recode_age_int <= 64) %>%
-  group_by(year.of.death,
-           farmworker_vs_not,
-           age_cat_every_5) %>% 
-  summarize(sum_deaths = n_distinct(id),
-            .groups = "drop") %>% 
-  rename(year = year.of.death)
-  
-# group population by year, worker/manager, and age category and count the number
-# of people in each strata
-df_people_per_stratum = df_ipums %>% 
-  filter(age >= 25 &
+df_ipums_direct = read_rds(here::here("data/df_ipums_limited.rds")) %>% 
+        filter(age >= 25 &
                age <= 64) %>%
-  group_by(year,
-           farmworker_vs_not,
-           age_cat_every_5) %>% 
-  summarize(sum_people = sum(perwt, na.rm = T),
-            .groups = "drop")
-  
-# get worker death rates by year and age group by joining to the number of people
-# in worker strata and dividing deaths by people
-df_worker_death_rates_crude = df_deaths_per_stratum %>%  
-  filter(farmworker_vs_not == "farmworker") %>% 
-  left_join(df_people_per_stratum,
-            by = c("year","farmworker_vs_not", "age_cat_every_5")) %>% 
-  mutate(death_rate_crude_worker = sum_deaths / sum_people)
-
-# calculate crude worker death rate overall by year for workers
-df_worker_rates_crude_year = df_deaths_per_stratum %>%  
-  filter(farmworker_vs_not == "farmworker") %>% 
-  left_join(df_people_per_stratum,
-            by = c("year","farmworker_vs_not", "age_cat_every_5")) %>% 
-  group_by(year) %>% 
-  summarize(total_worker_deaths = sum(sum_deaths, na.rm = T),
-            total_workers = sum(sum_people, na.rm = T),
-            .groups = "drop") %>% 
-  mutate(worker_crude_death_rate = total_worker_deaths / total_workers)
-  
-# start with number of people per stratum for not-farmworkers only
-# join to get the farmworker death rates per stratum
-# calculate expected deaths as number of not-farmworkers times worker death rates per stratum
-# join to get actual number of not-farmworker deaths per stratum
-df_manager_rates = df_people_per_stratum %>% 
-  filter(farmworker_vs_not == "not-farmworker") %>% 
-  left_join(df_worker_death_rates_crude %>% 
-              select(year, 
-                     age_cat_every_5, 
-                     death_rate_crude_worker),
-            by = c("year", "age_cat_every_5")) %>% 
-  mutate(expected_deaths = round(sum_people * death_rate_crude_worker, 2)) %>% 
-  left_join(df_deaths_per_stratum %>% 
-              filter(farmworker_vs_not == "not-farmworker"),
-            by = c("year", "farmworker_vs_not", "age_cat_every_5"))
-  
-# start with the manager expected and actual death counts by stratum 
-# group into years and sum the expected and actual death counts by year
-# divide actual by expected to get the adjusted mortality rate by year
-# join back to worker crude rates by year 
-df_manager_rates_adj_year = df_manager_rates %>% 
-  group_by(year) %>% 
-  summarize(total_expected = sum(expected_deaths, na.rm = T),
-            total_observed = sum(sum_deaths, na.rm = T),
-            .groups = "drop") %>% 
-  mutate(manager_std_mortality_ratio = round(total_observed / total_expected, 2)) %>% 
-  left_join(df_worker_rates_crude_year,
-           by = "year") %>% 
-  mutate(manager_adj_mortality_rate = manager_std_mortality_ratio * worker_crude_death_rate)
+        filter(labforce == 2) %>% 
+        mutate(dplyr::across(.cols = dplyr::everything(),
+                       .fns = unclass),
+         sex = if_else(sex == 1 , "Male", "Female"),
+         age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE"),
+         hispan = case_when(hispan == 0 ~ "Not Hispanic",
+                            hispan == 1 ~ "Mexican",
+                            hispan == 2 ~ "Puerto Rican",
+                            hispan == 3 ~ "Cuban",
+                            hispan == 4 ~ "Other",
+                            hispan == 9 ~ "Not reported",
+                            TRUE ~ "ISSUE"),
+         race = case_when(hispan %in% c(1,2,3,4) ~ "Hispanic",
+                          race == 1 ~ "White",
+                          race == 2 ~ "Black",
+                          race == 3 ~ "American Indian / Native American",
+                          race %in% c(4,5,6) ~ "Asian / Pacific Islander",
+                          TRUE ~ "Other"),
+         white_non_white = if_else(race == "White", "White", "Non-White"),
+         farmworker_vs_not = if_else(occ == "6050", "farmworker", "not-farmworker")) %>% 
+         filter(sex == 'Male')
 ```
 
+
+### Overall (Year)
+```{r}
+df_census_2000 = read_csv(here::here("data/census_2000_age.csv")) %>% 
+  filter(age >= 25 &
+         age <= 64) %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(age_cat_every_5) %>% 
+  summarize(population = sum(standard_population),
+            .groups = "drop")
+  
+df_deaths_direct = df_cohort %>% 
+  rename(year = year.of.death) %>%
+  mutate(age_cat_every_5 = case_when(
+                             recode_age_int < 30 ~ "1. 25 - 29",
+                             recode_age_int <= 34 ~ "2. 30 - 34",
+                             recode_age_int <= 39 ~ "3. 35 - 39",
+                             recode_age_int <= 44 ~ "4. 40 - 44",
+                             recode_age_int <= 49 ~ "5. 45 - 49",
+                             recode_age_int <= 54 ~ "6. 50 - 54",
+                             recode_age_int <= 59 ~ "7. 55 - 59",
+                             recode_age_int <= 64 ~ "8. 60 - 64",
+                             is.na(recode_age_int) ~ "9. Unknown",
+                             TRUE ~ "ISSUE"),
+        pre_post_covid = if_else(year < 2020, '1. Pre-Covid', '2. Post-Covid')) %>% 
+  group_by(year,
+           age_cat_every_5, 
+           farmworker_vs_not) %>% 
+  summarize(num_deaths = n_distinct(id),
+            .groups = "drop")
+  
+df_ca_people_direct = df_ipums_direct %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE"),
+        pre_post_covid = if_else(year < 2020, '1. Pre-Covid', '2. Post-Covid')) %>% 
+  group_by(year,
+           age_cat_every_5,
+           farmworker_vs_not) %>% 
+  summarize(num_people = sum(perwt),
+            .groups = "drop")
+  
+df_direct_age = df_deaths_direct %>% 
+  left_join(df_ca_people_direct,
+            by = c("year" = "year",
+                   "age_cat_every_5" = "age_cat_every_5",
+                   "farmworker_vs_not" = "farmworker_vs_not")) %>% 
+  left_join(df_census_2000,
+            by = "age_cat_every_5") %>% 
+  arrange(year,
+          age_cat_every_5,
+          farmworker_vs_not )
+```
+
+#### Age Adjusted Mortality Rates
+```{r}
+#| output: true
+rate_expected = df_direct_age %>% 
+  mutate(rate = num_deaths / num_people,
+         expected_deaths_2000 = rate * population)
+  
+age_direct_overall_year = rate_expected %>% 
+  group_by(year,
+           farmworker_vs_not) %>% 
+  summarize(n_expected = sum(expected_deaths_2000),
+            n_observed = sum(num_deaths),
+            n_population = sum(population),
+            .groups = "drop") %>% 
+  mutate(age_adjusted_mort_rate = round((n_expected / n_population) * 100000, 2)) 
+
+  
+age_direct_overall_year %>% 
+  dt_table()
+```
+
+#### Age Adjusted Mortality Rates (Confidence Intervals)
+```{r}
+#| output: true
+# using PHEindicatormethods package
+# Calculate rates per country directly standardized for age and sex
+mortality_ds_rate_phe <- df_direct_age %>%
+     group_by(year,
+              farmworker_vs_not) %>%
+     PHEindicatormethods::phe_dsr(
+          x = num_deaths,                 # column with observed number of events
+          n = num_people,             # column with non-standard pops for each stratum
+          stdpop = population,               # standard populations for each stratum
+          stdpoptype = "field")       # either "vector" for a standalone vector or "field" meaning std populations are in the data  
+
+# Print table
+mortality_ds_rate_phe %>% 
+  dt_table()
+```
+
+
+#### Excess Deaths per 100,000 by age group by year
+```{r}
+#| output: true
+rate_expected %>% 
+  mutate(rate = round(rate, 6)) %>% 
+  group_by(year,
+        age_cat_every_5) %>% 
+  mutate(excess_expected_farmworker_deaths = expected_deaths_2000 - lead(expected_deaths_2000)) %>% 
+  dt_table() %>% 
+  add_commas(vars = c("num_deaths",
+                      "num_people",
+                      "population",
+                      "expected_deaths_2000",
+                      "excess_expected_farmworker_deaths"))
+```
+
+
+
+
+
+### Overall (Pre vs. Covid)
+
+#### Age Adjusted Mortality Ratios
+```{r}
+df_census_2000 = read_csv(here::here("data/census_2000_age.csv")) %>% 
+  filter(age >= 25 &
+         age <= 64) %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE")) %>% 
+  group_by(age_cat_every_5) %>% 
+  summarize(population = sum(standard_population),
+            .groups = "drop")
+  
+df_deaths_direct = df_cohort %>% 
+  mutate(age_cat_every_5 = case_when(
+                             recode_age_int < 30 ~ "1. 25 - 29",
+                             recode_age_int <= 34 ~ "2. 30 - 34",
+                             recode_age_int <= 39 ~ "3. 35 - 39",
+                             recode_age_int <= 44 ~ "4. 40 - 44",
+                             recode_age_int <= 49 ~ "5. 45 - 49",
+                             recode_age_int <= 54 ~ "6. 50 - 54",
+                             recode_age_int <= 59 ~ "7. 55 - 59",
+                             recode_age_int <= 64 ~ "8. 60 - 64",
+                             is.na(recode_age_int) ~ "9. Unknown",
+                             TRUE ~ "ISSUE"),
+        pre_post_covid = if_else(year.of.death < 2020, '1. Pre-Covid', '2. Covid')) %>% 
+  group_by(pre_post_covid,
+           age_cat_every_5, 
+           farmworker_vs_not) %>% 
+  summarize(num_deaths = n_distinct(id),
+            .groups = "drop")
+  
+df_ca_people_direct = df_ipums_direct %>% 
+  mutate(age_cat_every_5 = case_when(
+                             age < 30 ~ "1. 25 - 29",
+                             age <= 34 ~ "2. 30 - 34",
+                             age <= 39 ~ "3. 35 - 39",
+                             age <= 44 ~ "4. 40 - 44",
+                             age <= 49 ~ "5. 45 - 49",
+                             age <= 54 ~ "6. 50 - 54",
+                             age <= 59 ~ "7. 55 - 59",
+                             age <= 64 ~ "8. 60 - 64",
+                             is.na(age) ~ "9. Unknown",
+                             TRUE ~ "ISSUE"),
+        pre_post_covid = if_else(year < 2020, '1. Pre-Covid', '2. Covid')) %>% 
+  group_by(pre_post_covid,
+           age_cat_every_5,
+           farmworker_vs_not) %>% 
+  summarize(num_people = sum(perwt),
+            .groups = "drop")
+  
+df_direct_age = df_deaths_direct %>% 
+  left_join(df_ca_people_direct,
+            by = c("pre_post_covid" = "pre_post_covid",
+                   "age_cat_every_5" = "age_cat_every_5",
+                   "farmworker_vs_not" = "farmworker_vs_not")) %>% 
+  left_join(df_census_2000,
+            by = "age_cat_every_5") %>% 
+  arrange(pre_post_covid,
+          age_cat_every_5,
+          farmworker_vs_not )
+```
 
 ```{r}
 #| output: true
-df_manager_rates_adj_year %>% 
-  mutate(worker_crude_death_rate = round(worker_crude_death_rate, 5),
-         total_expected = round(total_expected, 2),
-         manager_adj_mortality_rate = round(manager_adj_mortality_rate, 5)) %>% 
-  relocate(year,
-           total_worker_deaths,
-           total_workers, 
-           worker_crude_death_rate,
-           total_expected,
-           total_observed,
-           manager_std_mortality_ratio,
-           manager_adj_mortality_rate) %>% 
-  dt_table() %>% 
-  add_commas(vars =  c("total_workers",
-                        "total_worker_deaths",
-                          "total_expected",
-  "total_observed"))
+rate_expected = df_direct_age %>% 
+  mutate(rate = num_deaths / num_people,
+         expected_deaths_2000 = rate * population)
+  
+age_direct_overall_year = rate_expected %>% 
+  group_by(pre_post_covid,
+           farmworker_vs_not) %>% 
+  summarize(n_expected = sum(expected_deaths_2000),
+            n_observed = sum(num_deaths),
+            n_population = sum(population),
+            .groups = "drop") %>% 
+  mutate(age_adjusted_mort_rate = round((n_expected / n_population) * 100000, 2)) 
+
+  
+age_direct_overall_year %>% 
+  dt_table()
 ```
+
+
+#### Age Adjusted Mortality Ratios (Confidence Intervals)
+```{r}
+#| output: true
+# using PHEindicatormethods package
+# Calculate rates per country directly standardized for age and sex
+mortality_ds_rate_phe <- df_direct_age %>%
+     group_by(pre_post_covid,
+              farmworker_vs_not) %>%
+     PHEindicatormethods::phe_dsr(
+          x = num_deaths,                 # column with observed number of events
+          n = num_people,             # column with non-standard pops for each stratum
+          stdpop = population,               # standard populations for each stratum
+          stdpoptype = "field")       # either "vector" for a standalone vector or "field" meaning std populations are in the data  
+
+# Print table
+mortality_ds_rate_phe %>% 
+  mutate(value = round(value, 2)) %>% 
+  dt_table() %>% 
+  add_commas(c("total_count",
+             "total_pop"))
+```
+
+### Excess Deaths per 100,000 by age group by year
+```{r}
+#| output: true
+df_excess_expected = rate_expected %>% 
+  mutate(rate = round(rate, 6)) %>% 
+  group_by(pre_post_covid,
+           age_cat_every_5) %>% 
+  mutate(excess_expected_farmworker_deaths = expected_deaths_2000 - lead(expected_deaths_2000))
+
+df_excess_expected %>% 
+  dt_table() %>% 
+  add_commas(vars = c("num_deaths",
+                      "num_people",
+                      "population",
+                      "expected_deaths_2000",
+                      "excess_expected_farmworker_deaths"))
+```
+
+### Plot of Excess Expected Deaths by Age Group (Pre vs. Covid)
+```{r}
+#| output: true
+#| out-width: 100%
+df_excess_expected %>% 
+  filter(!is.na(excess_expected_farmworker_deaths)) %>% 
+  ggplot(aes(x = age_cat_every_5,
+             y = excess_expected_farmworker_deaths)) +
+  geom_bar(stat = "identity") + 
+  facet_wrap(~pre_post_covid) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.95, hjust=1))
+```
+
 
 
