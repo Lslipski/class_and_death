@@ -86,6 +86,15 @@ df_cohort = read_rds(file = here::here("data/df_farmworkers_vs_all.rds")) %>%
          recode_sex == 'male')
 ```
 
+# Sample Size
+```{r}
+df_cohort %>% 
+  group_by(farmworker_vs_not) %>% 
+  summarize(num_deaths = n_distinct(id)) %>% 
+  dt_table() %>% 
+  add_commas(vars = "num_deaths")
+```
+
 # Education
 ```{r}
 #| output: true
@@ -771,14 +780,16 @@ mortality_ds_rate_phe %>%
              "total_pop"))
 ```
 
-### Excess Deaths per 100,000 by age group by year
+#### Excess Deaths per 100,000 by age group by year
 ```{r}
 #| output: true
 df_excess_expected = rate_expected %>% 
-  mutate(rate = round(rate, 6)) %>% 
+  mutate(rate = round(rate, 6),
+         adj_mort_rate = expected_deaths_2000 / population * 100000) %>% 
   group_by(pre_post_covid,
            age_cat_every_5) %>% 
-  mutate(excess_expected_farmworker_deaths = expected_deaths_2000 - lead(expected_deaths_2000))
+  mutate(excess_expected_farmworker_deaths = expected_deaths_2000 - lead(expected_deaths_2000),
+         excess_farmworker_death_rate_per_100k = adj_mort_rate - lead(adj_mort_rate))
 
 df_excess_expected %>% 
   dt_table() %>% 
@@ -802,5 +813,16 @@ df_excess_expected %>%
   theme(axis.text.x = element_text(angle = 45, vjust = 0.95, hjust=1))
 ```
 
-
+### Plot of Excess Deaths Per 100k by Age Group (Pre vs. Covid)
+```{r}
+#| output: true
+#| out-width: 100%
+df_excess_expected %>% 
+  filter(!is.na(excess_farmworker_death_rate_per_100k)) %>% 
+  ggplot(aes(x = age_cat_every_5,
+             y = excess_farmworker_death_rate_per_100k)) +
+  geom_bar(stat = "identity") + 
+  facet_wrap(~pre_post_covid) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.95, hjust=1))
+```
 
