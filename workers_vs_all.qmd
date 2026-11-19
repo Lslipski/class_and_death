@@ -826,3 +826,104 @@ df_excess_expected %>%
   theme(axis.text.x = element_text(angle = 45, vjust = 0.95, hjust=1))
 ```
 
+
+
+
+# Final Cause of Death
+
+:::{.callout-note}
+I manually added some code descriptions to the df_icd table because they did not match the latest tuva ICD description table. These are probably slightly older codes. I also split out the first letter (`start_letter`) as its own variable and the 2nd and 3rd characters of the ICD-10s into a second extra variable (`start_number`) primarily for coding into external causes. I coerced the `start_number` to an integer, which introduced some NAs, but these do not exist in any of the external cause codes (V00 - Y99). See below for start letters that contain null start_numbers.
+:::
+
+```{r}
+df_cod = df_cohort %>% 
+  mutate(cod_icd10 = substr(final.cause.of.death.icd10, 1, 3),
+         cod_icd10 = if_else(cod_icd10 == "",
+                                          NA,
+                                          cod_icd10))
+```
+
+```{r}
+df_icd = read_csv(here::here("data/icd_10_cm_codes_tuva.csv.gz"),
+                  col_names = c("code",
+                                "billable",
+                                "short_desc",
+                                "long_desc")) %>% 
+         bind_rows(tribble(~code, ~ billable, ~short_desc, ~long_desc,
+                   "X70", 0, "Intentional self-harm by hanging, strangulation and suffocation", "",
+                   "X44", 0, "Accidental poisoning by and exposure to other and unspecified drugs, medicaments and biological substances", "",
+                   "X41", 0, "Accidental poisoning by and exposure to antiepileptic, sedative-hypnotic, antiparkinsonism and psychotropic drugs, not elsewhere classified", "",
+                   "X42", 0, "Accidental poisoning by and exposure to narcotics and psychodysleptics [hallucinogens], not elsewhere classified", "")) %>% 
+        mutate(start_letter = str_sub(code, 1, 1),
+               start_number = as.integer(str_sub(code, 2, 3)),
+               external_natural = if_else(start_letter %in% c("V", "W", "X", "Y"),
+                                          "External",
+                                          "Natural"))
+```
+
+Start letters that contain null start_numbers:
+```{r}
+#| output: true
+df_icd %>% 
+  filter(is.na(start_number)) %>% 
+  count(start_letter) %>% 
+  arrange(start_letter)
+```
+
+:::{.callout-note}
+A number of reported ICD 10 CM codes in the data do not match to a real ICD 10 CM code.
+For now, I am shortening the reported codes to 3 characters and then joining to increase matching. Further some final.cause.of.death.icd10 values are empty strings. I'm converting to NA and filtering to records without NA. 
+:::
+
+Number of records with Null cause of death
+```{r}
+#| output: true
+df_cod %>% 
+  filter(is.na(cod_icd10)) %>% 
+  group_by(farmworker_vs_not) %>% 
+  count()
+```
+
+```{r}
+# filtering null causes of death
+df_cod = df_cod %>% 
+  filter(!is.na(cod_icd10))
+```
+
+
+## Farm Workers
+```{r}
+#| output: TRUE
+df_cod %>% 
+  filter(farmworker_vs_not == 'farmworker') %>% 
+  group_by(cod_icd10) %>% 
+  summarize(num_deaths = n_distinct(id)) %>% 
+  arrange(desc(num_deaths)) %>% 
+  left_join(df_icd,
+            by = c("cod_icd10" = "code"),
+            keep = TRUE) %>% 
+  select(cod_icd10,
+         code,
+         short_desc,
+         num_deaths) %>% 
+  dt_table()
+```
+
+
+## All Others
+```{r}
+#| output: TRUE
+df_cod %>% 
+  filter(farmworker_vs_not == 'not-farmworker') %>% 
+  group_by(cod_icd10) %>% 
+  summarize(num_deaths = n_distinct(id)) %>% 
+  arrange(desc(num_deaths)) %>% 
+  left_join(df_icd,
+            by = c("cod_icd10" = "code"),
+            keep = TRUE) %>% 
+  select(cod_icd10,
+         code,
+         short_desc,
+         num_deaths) %>% 
+  dt_table()
+```
