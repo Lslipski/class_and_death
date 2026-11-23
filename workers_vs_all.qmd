@@ -774,11 +774,139 @@ mortality_ds_rate_phe <- df_direct_age %>%
 
 # Print table
 mortality_ds_rate_phe %>% 
-  mutate(value = round(value, 2)) %>% 
+  group_by(pre_post_covid) %>% 
+  mutate(value = round(value, 2),
+         lowercl = round(lowercl, 2),
+         uppercl = round(uppercl, 2),
+         numerical_diff = round(value - dplyr::lead(value), 2),
+         percent_diff = round((value / lead(value) * 100))) %>% 
+  relocate(pre_post_covid,
+           farmworker_vs_not,
+           total_count,
+           total_pop,
+           value,
+           numerical_diff,
+           percent_diff) %>% 
   dt_table() %>% 
   add_commas(c("total_count",
              "total_pop"))
 ```
+
+
+#### Under 30 Age Adjusted Mortality Ratios (Confidence Intervals)
+```{r}
+#| output: true
+# using PHEindicatormethods package
+# Calculate rates per country directly standardized for age and sex
+mortality_ds_rate_phe_u30 <- df_direct_age %>%
+     filter(age_cat_every_5 == '1. 25 - 29') %>% 
+     group_by(pre_post_covid,
+              farmworker_vs_not) %>%
+     PHEindicatormethods::phe_dsr(
+          x = num_deaths,                 # column with observed number of events
+          n = num_people,             # column with non-standard pops for each stratum
+          stdpop = population,               # standard populations for each stratum
+          stdpoptype = "field")       # either "vector" for a standalone vector or "field" meaning std populations are in the data  
+
+# Print table
+mortality_ds_rate_phe_u30 %>% 
+  group_by(pre_post_covid) %>% 
+  mutate(value = round(value, 2),
+         lowercl = round(lowercl, 2),
+         uppercl = round(uppercl, 2),
+         numerical_diff = round(value - dplyr::lead(value), 2),
+         percent_diff = round((value / lead(value) * 100))) %>% 
+  relocate(pre_post_covid,
+           farmworker_vs_not,
+           total_count,
+           total_pop,
+           value,
+           numerical_diff,
+           percent_diff) %>% 
+  dt_table() %>% 
+  add_commas(c("total_count",
+             "total_pop"))
+```
+
+
+#### Under 40 Age Adjusted Mortality Ratios (Confidence Intervals)
+```{r}
+#| output: true
+# using PHEindicatormethods package
+# Calculate rates per country directly standardized for age and sex
+mortality_ds_rate_phe_u40 <- df_direct_age %>%
+     filter(age_cat_every_5 %in% c('1. 25 - 29',
+                                   '2. 30 - 34',
+                                   '3. 35 - 39')) %>% 
+     group_by(pre_post_covid,
+              farmworker_vs_not) %>%
+     PHEindicatormethods::phe_dsr(
+          x = num_deaths,                 # column with observed number of events
+          n = num_people,             # column with non-standard pops for each stratum
+          stdpop = population,               # standard populations for each stratum
+          stdpoptype = "field")       # either "vector" for a standalone vector or "field" meaning std populations are in the data  
+
+# Print table
+mortality_ds_rate_phe_u40 %>% 
+  group_by(pre_post_covid) %>% 
+  mutate(value = round(value, 2),
+         lowercl = round(lowercl, 2),
+         uppercl = round(uppercl, 2),
+         numerical_diff = round(value - dplyr::lead(value), 2),
+         percent_diff = round((value / lead(value) * 100))) %>% 
+  relocate(pre_post_covid,
+           farmworker_vs_not,
+           total_count,
+           total_pop,
+           value,
+           numerical_diff,
+           percent_diff) %>% 
+  dt_table() %>% 
+  add_commas(c("total_count",
+             "total_pop"))
+```
+
+#### Under 50 Age Adjusted Mortality Ratios (Confidence Intervals)
+```{r}
+#| output: true
+# using PHEindicatormethods package
+# Calculate rates per country directly standardized for age and sex
+mortality_ds_rate_phe_u50 <- df_direct_age %>%
+     filter(age_cat_every_5 %in% c('1. 25 - 29',
+                                   '2. 30 - 34',
+                                   '3. 35 - 39',
+                                   '4. 40 - 44',
+                                   '45 - 49')) %>% 
+     group_by(pre_post_covid,
+              farmworker_vs_not) %>%
+     PHEindicatormethods::phe_dsr(
+          x = num_deaths,                 # column with observed number of events
+          n = num_people,             # column with non-standard pops for each stratum
+          stdpop = population,               # standard populations for each stratum
+          stdpoptype = "field")       # either "vector" for a standalone vector or "field" meaning std populations are in the data  
+
+# Print table
+mortality_ds_rate_phe_u50 %>% 
+  group_by(pre_post_covid) %>% 
+  mutate(value = round(value, 2),
+         lowercl = round(lowercl, 2),
+         uppercl = round(uppercl, 2),
+         numerical_diff = round(value - dplyr::lead(value), 2),
+         percent_diff = round((value / lead(value) * 100))) %>% 
+  relocate(pre_post_covid,
+           farmworker_vs_not,
+           total_count,
+           total_pop,
+           value,
+           numerical_diff,
+           percent_diff) %>% 
+  dt_table() %>% 
+  add_commas(c("total_count",
+             "total_pop"))
+```
+
+
+
 
 #### Excess Deaths per 100,000 by age group by year
 ```{r}
